@@ -13,7 +13,7 @@
   <image source="../assets/banners.png" width="296" height="300"/>
  </tileset>
  <objectgroup id="10" name="Portals">
-  <object id="12" type="Portals" x="16" y="448" width="64" height="64">
+  <object id="12" type="Portals" x="16" y="496" width="64" height="16">
    <properties>
     <property name="auto" type="bool" value="false"/>
     <property name="prompt" value="E: Enter"/>

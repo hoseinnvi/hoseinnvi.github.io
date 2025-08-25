@@ -13,7 +13,7 @@
   <image source="../assets/signpost.png" width="102" height="102"/>
  </tileset>
  <objectgroup id="25" name="Portals">
-  <object id="57" type="Portals" x="320" y="464" width="128" height="48">
+  <object id="57" type="Portals" x="336" y="496" width="96" height="16">
    <properties>
     <property name="auto" type="bool" value="false"/>
     <property name="prompt" value="E: Enter"/>
@@ -21,7 +21,7 @@
     <property name="targetSpawn" value="toOut"/>
    </properties>
   </object>
-  <object id="58" type="Portals" x="32" y="0" width="48" height="32">
+  <object id="58" type="Portals" x="32" y="0" width="48" height="16">
    <properties>
     <property name="auto" type="bool" value="false"/>
     <property name="prompt" value="E: Enter"/>
@@ -31,7 +31,7 @@
   </object>
  </objectgroup>
  <objectgroup id="24" name="Spawns">
-  <object id="64" type="Spawns" x="48" y="48">
+  <object id="64" type="Spawns" x="48" y="64">
    <properties>
     <property name="facing" value="down"/>
     <property name="id" value="fromSecond"/>
