@@ -1,306 +1,40 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Hosein — Walkable Résumé</title>
-<meta name="description" content="Stroll around a tiny pixel world to explore Hosein's résumé and projects." />
-<style>
-  :root {
-    --bg: #0b0f1a; --panel:#0f1524; --ink:#eaf2ff; --hint:#9fb3d9;
-    --accent:#59f; --good:#78f3a0; --bad:#ff7a7a;
-  }
-  html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:ui-monospace,Menlo,Consolas,monospace}
-  .wrap{max-width:980px;margin:18px auto;padding:0 12px}
-  h1{margin:0 0 8px;font-weight:800;letter-spacing:.3px}
-  .bar{display:flex;align-items:center;justify-content:space-between;margin:0 0 8px}
-  .hud{font-size:12px;opacity:.85}
-  .hud kbd{border:1px solid #33476e;border-radius:6px;padding:2px 6px;margin:0 2px;background:#0d1322}
-  canvas{display:block;border:1px solid #2a3b60;border-radius:14px;width:100%;max-width:980px;height:auto;
-         image-rendering: pixelated; image-rendering: crisp-edges; background:#0a0f1c}
-  a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
-  /* Modal panel */
-  .modal{position:fixed;inset:0;background:rgba(5,7,12,.55);display:none;align-items:center;justify-content:center;padding:16px}
-  .modal.open{display:flex}
-  .card{background:var(--panel);border:1px solid #2a3b60;border-radius:16px;max-width:720px;width:min(720px,96vw);padding:18px}
-  .card h2{margin:0 0 6px}
-  .close{float:right;border:1px solid #445b92;background:#101a2d;color:#cfe1ff;border-radius:8px;padding:6px 10px;cursor:pointer}
-  .pill{display:inline-block;border:1px solid #3a538a;border-radius:999px;padding:4px 8px;margin:3px;font-size:12px}
-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-  .proj{border:1px solid #344b80;border-radius:12px;padding:10px}
-  .proj h3{margin:0 0 4px;font-size:14px}
-  footer{opacity:.6;font-size:12px;margin-top:8px;text-align:center}
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Resume Game</title>
+    <style>
+        /* Basic reset */
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            background: #000;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+        #game {
+            display: block;
+            margin: 0 auto;
+            background: #222;
+            /* Ensure crisp pixel rendering */
+            image-rendering: pixelated;
+            outline: none;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            font-size: 1.2em;
+        }
+    </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="bar">
-    <h1>Walkable Résumé</h1>
-    <div class="hud">
-      Move <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> / Arrows • Interact <kbd>E</kbd> • Toggle help <kbd>H</kbd>
-    </div>
-  </div>
-  <!-- Internal render size = 384x256 pixels; CSS scales it crisply -->
-  <canvas id="game" width="384" height="256" aria-label="Tiny world with interactive résumé signs"></canvas>
-  <footer>© <span id="year"></span> Hosein Navaei Moakhkhar • <a href="https://github.com/hoseinnvi">GitHub</a> • <a href="https://www.linkedin.com/in/hoseinnvi/">LinkedIn</a> • <a href="./resume.pdf">Resume PDF</a></footer>
-</div>
-
-<!-- Modal -->
-<div class="modal" id="modal" role="dialog" aria-modal="true" aria-labelledby="modtitle">
-  <div class="card">
-    <button class="close" id="closeBtn">Esc ✕</button>
-    <h2 id="modtitle">Title</h2>
-    <div id="modbody"></div>
-  </div>
-</div>
-
-<script>
-/* =============== Tiny Top-Down Engine (no libraries) =============== */
-const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
-ctx.imageSmoothingEnabled = false;
-document.getElementById('year').textContent = new Date().getFullYear();
-
-/* World/grid */
-const T = 16;                 // tile size in pixels
-const COLS = canvas.width / T;
-const ROWS = canvas.height / T;
-
-/* Simple tiles: 0 grass, 1 path, 2 shrub (block), 3 water (block), 4 stone (block), 5 sign (interact) */
-const map = [
-  "222222222222222222222222222222222222",
-  "2...........11......2222...........2",
-  "2...######..11....2.....2..........2",
-  "2...#....#........2.55..2....~~~~..2",
-  "2...#....#....11..2.....2...~~~~~..2",
-  "2...#....#....11..2.....2....~~~...2",
-  "2...#....#........2.....2..........2",
-  "2...######..11........2222.....o...2",
-  "2..........11..................o...2",
-  "2..~~~~..............#####.........2",
-  "2..~~~~..o...........#...#.........2",
-  "2..~~~...............#...#.........2",
-  "2....................#...#.........2",
-  "2...........11.......#####...55....2",
-  "2...........11.....................2",
-  "2..................2...............2",
-  "2........o.........2...............2",
-  "2..................2...............2",
-  "2.........#####....................2",
-  "2.........#...#....................2",
-  "2.....55..#...#.............11.....2",
-  "2.........#####.............11.....2",
-  "2.................................o2",
-  "2..................................2",
-  "222222222222222222222222222222222222",
-];
-// Legend characters -> tile ids
-const legend = { ".":0, "1":1, "#":4, "~":3, "2":2, "5":5, "o":2 }; // 'o' shrub too
-
-function tileAt(c, r) {
-  c = Math.max(0, Math.min(COLS-1, c));
-  r = Math.max(0, Math.min(ROWS-1, r));
-  return legend[map[r][c]] ?? 0;
-}
-const blocked = new Set([2,3,4]); // shrubs, water, stone
-
-/* Player */
-const player = {
-  x: 6*T, y: 6*T, w: 10, h: 12, speed: 70, facing: "down", hp: 5
-};
-
-/* Interactables: signs on the map with content */
-const boards = [
-  { x: 18*T, y: 3*T, title: "About",
-    html: `
-      <p>Hi! I’m <strong>Hosein Navaei Moakhkhar</strong>, a Machine Learning Engineer focused on <em>LLMs, NLP, Computer Vision</em>, and <em>MLOps</em>. I build clear, reliable systems that ship.</p>
-      <p>Currently in Edmonton, AB, Canada. Open to roles in applied AI / platform ML.</p>
-      <p><a href="./resume.pdf">Download my résumé (PDF)</a></p>
-    `},
-  { x: 19*T, y: 13*T, title: "Skills",
-    html: `
-      <p>${["Python","PyTorch","LLMs","RAG","Computer Vision","NLP","Reinforcement Learning","Snowflake","Azure","AWS","FastAPI","SQL","FAISS","Docker","Kubernetes"].map(s=>`<span class="pill">${s}</span>`).join("")}</p>
-    `},
-  { x: 5*T, y: 20*T, title: "Experience",
-    html: `
-      <ul>
-        <li><strong>GameMentor</strong> — AI coaching platform (CV + recsys). Low-latency, modular microservices.</li>
-        <li><strong>Healthcare / Snowflake</strong> — Replicated SickKids SEDAR model into Snowflake with curated schemas & ETL validation.</li>
-        <li><strong>Security tooling</strong> — Focus on inference latency, canary/A-B evals, and deployment hygiene.</li>
-      </ul>
-    `},
-  { x: 30*T, y: 20*T, title: "Projects",
-    html: `
-      <div class="grid">
-        <div class="proj">
-          <h3>Property→Listing Matcher</h3>
-          <p>FAISS + SBERT + FastAPI under 20 MB memory constraint.</p>
-          <p><a href="https://github.com/hoseinnvi" target="_blank">Code / write-ups</a></p>
-        </div>
-        <div class="proj">
-          <h3>3D Reconstruction</h3>
-          <p>Stereo + neural depth (Depth Anything), TSDF fusion, homography stitching.</p>
-          <p><a href="https://github.com/hoseinnvi" target="_blank">Notes</a></p>
-        </div>
-      </div>
-    `},
-  { x: 31*T, y: 3*T, title: "Contact",
-    html: `
-      <p>Email: <a href="mailto:hosein.navaei@gmail.com">hosein.navaei@gmail.com</a></p>
-      <p>GitHub: <a href="https://github.com/hoseinnvi" target="_blank">hoseinnvi</a> • LinkedIn: <a href="https://www.linkedin.com/in/hoseinnvi/" target="_blank">/in/hoseinnvi</a></p>
-    `}
-];
-
-/* Input */
-const keys = {};
-onkeydown = (e)=>{ keys[e.key.toLowerCase()] = true; if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.key)) e.preventDefault(); };
-onkeyup   = (e)=>{ keys[e.key.toLowerCase()] = false; };
-
-let showHelp = false;
-document.addEventListener('keydown', (e)=>{
-  if(e.key === 'h' || e.key==='H') showHelp = !showHelp;
-  if(e.key === 'Escape') closeModal();
-  if((e.key==='e'||e.key==='E') && canInteract) openBoard(hoverBoard);
-});
-
-/* Modal helpers */
-const modal = document.getElementById('modal');
-const modtitle = document.getElementById('modtitle');
-const modbody = document.getElementById('modbody');
-const closeBtn = document.getElementById('closeBtn');
-closeBtn.onclick = closeModal;
-function openBoard(b){
-  if(!b) return;
-  modtitle.textContent = b.title;
-  modbody.innerHTML = b.html;
-  modal.classList.add('open');
-}
-function closeModal(){ modal.classList.remove('open'); }
-
-/* Camera is fixed; world is one screen. Movement & collisions */
-function tryMove(ax, ay, dt){
-  const stepX = ax * player.speed * dt;
-  const stepY = ay * player.speed * dt;
-
-  // move X
-  player.x += stepX;
-  if(collides()) player.x -= stepX;
-
-  // move Y
-  player.y += stepY;
-  if(collides()) player.y -= stepY;
-}
-function collides(){
-  // check 4 corners against blocking tiles
-  const left = Math.floor((player.x - player.w/2)/T);
-  const right = Math.floor((player.x + player.w/2)/T);
-  const top = Math.floor((player.y - player.h/2)/T);
-  const bottom = Math.floor((player.y + player.h/2)/T);
-  return [ [left,top],[right,top],[left,bottom],[right,bottom] ].some(([c,r]) => blocked.has(tileAt(c,r)));
-}
-
-/* Drawing helpers */
-function drawTile(c, r, id){
-  const x = c*T, y = r*T;
-  // Grass base
-  if(id===0 || id===1 || id===2 || id===4 || id===5) {
-    ctx.fillStyle = "#20323f"; ctx.fillRect(x,y,T,T);
-    ctx.fillStyle = "#263f4d"; ctx.fillRect(x,y,T,1);
-    ctx.fillStyle = "#1c2b36"; ctx.fillRect(x,y,1,T);
-  }
-  // path
-  if(id===1){ ctx.fillStyle = "#6b4f2a"; ctx.fillRect(x+2,y+2,T-4,T-4); }
-  // shrub
-  if(id===2){ ctx.fillStyle = "#2f6b3d"; ctx.fillRect(x+1,y+1,T-2,T-2); }
-  // water
-  if(id===3){ ctx.fillStyle = "#1a4f7a"; ctx.fillRect(x,y,T,T); ctx.fillStyle="#6cc6ff"; ctx.fillRect(x+3,y+5,T-6,6); }
-  // stone
-  if(id===4){ ctx.fillStyle = "#7a7d87"; ctx.fillRect(x+2,y+2,T-4,T-4); }
-  // sign
-  if(id===5){ ctx.fillStyle = "#7b4a1a"; ctx.fillRect(x+6,y+4,4,10); ctx.fillStyle="#caa46a"; ctx.fillRect(x+3,y+2,10,7); }
-}
-function drawPlayer(){
-  const px = Math.round(player.x), py = Math.round(player.y);
-  // simple pixel dude
-  // shadow
-  ctx.fillStyle = "rgba(0,0,0,.35)";
-  ctx.fillRect(px-6, py+6, 12, 3);
-  // body
-  ctx.fillStyle = "#2c8a6b"; ctx.fillRect(px-5, py-6, 10, 9);
-  // head
-  ctx.fillStyle = "#d99363"; ctx.fillRect(px-5, py-13, 10, 8);
-  // hair/hood
-  ctx.fillStyle = "#a65a2a"; ctx.fillRect(px-5, py-14, 10, 3);
-  // face dot
-  ctx.fillStyle = "#3b2b26"; ctx.fillRect(px+2, py-10, 1,1);
-}
-function drawHelp(){
-  const text = "Find a sign and press E";
-  ctx.fillStyle = "rgba(0,0,0,.45)";
-  ctx.fillRect(6,6,Math.max(110, 8*text.length/2)+6,22);
-  ctx.fillStyle = "#d7e6ff";
-  ctx.font = "8px monospace";
-  ctx.fillText(text, 10, 20);
-}
-
-/* Interaction detection */
-let canInteract = false, hoverBoard = null;
-function checkInteract(){
-  canInteract = false; hoverBoard = null;
-  for(const b of boards){
-    const dx = (player.x - (b.x+8));
-    const dy = (player.y - (b.y+8));
-    const d = Math.hypot(dx,dy);
-    if(d < 20){ canInteract = true; hoverBoard = b; return; }
-  }
-}
-
-/* Main loop */
-let last = performance.now();
-function loop(t){
-  const dt = Math.min(0.033, (t - last)/1000); last = t;
-
-  // update
-  let ax=0, ay=0;
-  if(keys["arrowleft"]||keys["a"]) ax -= 1;
-  if(keys["arrowright"]||keys["d"]) ax += 1;
-  if(keys["arrowup"]||keys["w"]) ay -= 1;
-  if(keys["arrowdown"]||keys["s"]) ay += 1;
-  const len = Math.hypot(ax,ay)||1; ax/=len; ay/=len;
-  tryMove(ax,ay,dt);
-  checkInteract();
-
-  // draw world
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  for(let r=0;r<ROWS;r++){
-    for(let c=0;c<COLS;c++){
-      drawTile(c,r, tileAt(c,r));
-    }
-  }
-  // highlight signs
-  boards.forEach(b=>{
-    const c = Math.round(b.x/T), r = Math.round(b.y/T);
-    drawTile(c,r,5);
-  });
-
-  // draw player
-  drawPlayer();
-
-  // UI prompts
-  if(canInteract){
-    const {x,y} = hoverBoard;
-    ctx.fillStyle = "rgba(0,0,0,.6)";
-    ctx.fillRect(x-18,y-12,48,12);
-    ctx.fillStyle = "#eaf2ff"; ctx.font = "8px monospace";
-    ctx.fillText("E: " + hoverBoard.title, x-14, y-3);
-  } else if(showHelp){ drawHelp(); }
-
-  requestAnimationFrame(loop);
-}
-requestAnimationFrame(loop);
-
-/* Click/touch to close modal outside card */
-modal.addEventListener('click', (e)=>{ if(e.target===modal) closeModal(); });
-</script>
+    <canvas id="game" width="768" height="512" tabindex="0"></canvas>
+    <div id="loading">Loading…</div>
+    <script src="game.js"></script>
 </body>
 </html>

@@ -1,0 +1,40 @@
+# ===== Tileset atlas notes =====
+# File: assets/tiles_interior.png
+# Tile size: 16x16 px
+# Indexing: (col,row) starting at (0,0) in the top-left tile of the PNG.
+
+TILE_SIZE: 16
+
+# --- Base ground / rugs ---
+floor_wood:       (7,10)    # seamless plank square in the middle walkway
+rug_center:       (14,11)   # plain red fill
+rug_top:          (14,10)   # red with top border/shadow
+rug_bottom:       (14,14)   # red with bottom corner highlight (use as bottom edge)
+rug_left:         (14,11)   # (same as center — no separate left edge in this sheet)
+rug_right:        (15,11)   # runner center with gold stripe (optional alt)
+rug_corner_tl:    (14,10)
+rug_corner_tr:    (15,10)
+rug_corner_bl:    (14,14)
+rug_corner_br:    (15,14)
+
+# --- Walls / panels ---
+wall_panel_top:   (12,0)    # blue stripes with top trim
+wall_panel_mid:   (12,1)    # repeatable blue stripes
+wall_panel_base:  (12,2)    # dark wood baseboard
+
+# --- Furniture faces (treat as blocking) ---
+bookshelf_face:   (4,4)     # a good 1×1 bookshelf face tile
+desk_top:         (8,6)     # desk surface fill
+desk_front:       (9,8)     # desk front edge (blocking)
+step_planks:      (7,11)    # small plank/step tile beside the desk
+
+# --- Interact / signage (for “E to open”) ---
+sign_lamp:        (5,6)     # lamp head – works well as an interact marker
+
+# --- Decorative 1×1s (optional) ---
+plant:            (4,12)    # potted plant
+chair_seat:       (4,10)    # blue chair cushion
+globe_quadrant:   (10,10)   # clear quadrant of the globe (with crosshair)
+
+# Mark which tiles are solid (unwalkable)
+BLOCKED_TILES: bookshelf_face, desk_front, wall_panel_top, wall_panel_mid, wall_panel_base
