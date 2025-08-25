@@ -15,7 +15,7 @@
                         {
                          "name":"auto",
                          "type":"bool",
-                         "value":false
+                         "value":true
                         }, 
                         {
                          "name":"prompt",

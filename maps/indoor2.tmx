@@ -15,7 +15,7 @@
  <objectgroup id="10" name="Portals">
   <object id="12" type="Portals" x="16" y="496" width="64" height="16">
    <properties>
-    <property name="auto" type="bool" value="false"/>
+    <property name="auto" type="bool" value="true"/>
     <property name="prompt" value="E: Enter"/>
     <property name="targetMap" value="maps/indoor.json"/>
     <property name="targetSpawn" value="fromSecond"/>

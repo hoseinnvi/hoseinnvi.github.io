@@ -15,7 +15,7 @@
  <objectgroup id="25" name="Portals">
   <object id="57" type="Portals" x="336" y="496" width="96" height="16">
    <properties>
-    <property name="auto" type="bool" value="false"/>
+    <property name="auto" type="bool" value="true"/>
     <property name="prompt" value="E: Enter"/>
     <property name="targetMap" value="maps/outdoor.json"/>
     <property name="targetSpawn" value="toOut"/>
@@ -23,7 +23,7 @@
   </object>
   <object id="58" type="Portals" x="32" y="0" width="48" height="16">
    <properties>
-    <property name="auto" type="bool" value="false"/>
+    <property name="auto" type="bool" value="true"/>
     <property name="prompt" value="E: Enter"/>
     <property name="targetMap" value="maps/indoor2.json"/>
     <property name="targetSpawn" value="fromLibrary"/>
