@@ -8,7 +8,7 @@
          "name":"Portals",
          "objects":[
                 {
-                 "height":48,
+                 "height":16,
                  "id":57,
                  "name":"",
                  "properties":[
@@ -35,12 +35,12 @@
                  "rotation":0,
                  "type":"Portals",
                  "visible":true,
-                 "width":128,
-                 "x":320,
-                 "y":464
+                 "width":96,
+                 "x":336,
+                 "y":496
                 }, 
                 {
-                 "height":32,
+                 "height":16,
                  "id":58,
                  "name":"",
                  "properties":[
@@ -103,7 +103,7 @@
                  "visible":true,
                  "width":0,
                  "x":48,
-                 "y":48
+                 "y":64
                 }, 
                 {
                  "height":0,
