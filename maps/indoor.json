@@ -836,7 +836,7 @@
          "name":"text",
          "objects":[
                 {
-                 "height":19,
+                 "height":32,
                  "id":1,
                  "name":"",
                  "rotation":0,
@@ -857,7 +857,7 @@
                  "y":0
                 }, 
                 {
-                 "height":19,
+                 "height":32,
                  "id":7,
                  "name":"",
                  "rotation":0,
@@ -878,7 +878,7 @@
                  "y":0
                 }, 
                 {
-                 "height":16,
+                 "height":32,
                  "id":8,
                  "name":"",
                  "rotation":0,
@@ -896,7 +896,7 @@
                  "visible":true,
                  "width":61.833,
                  "x":592,
-                 "y":16
+                 "y":0
                 }, 
                 {
                  "height":11.3636363636364,
@@ -920,7 +920,7 @@
                  "y":160
                 }, 
                 {
-                 "height":19,
+                 "height":32,
                  "id":17,
                  "name":"",
                  "rotation":0,
