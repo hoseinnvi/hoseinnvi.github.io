@@ -23,7 +23,7 @@
   </object>
  </objectgroup>
  <objectgroup id="11" name="Spawns">
-  <object id="13" type="Spawns" x="48" y="448">
+  <object id="13" type="Spawns" x="48" y="432">
    <properties>
     <property name="facing" value="up"/>
     <property name="id" value="fromLibrary"/>
