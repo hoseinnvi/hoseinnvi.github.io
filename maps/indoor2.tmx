@@ -235,7 +235,7 @@
 </data>
  </layer>
  <objectgroup id="6" name="text">
-  <object id="1" x="624" y="0" width="112" height="23">
+  <object id="1" x="640" y="16" width="112" height="23">
    <text fontfamily="Sans Serif Collection" wrap="1" color="#ffffff" halign="center" valign="center">Game Mentor</text>
   </object>
  </objectgroup>
