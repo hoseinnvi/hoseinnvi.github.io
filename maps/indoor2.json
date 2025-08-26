@@ -489,9 +489,9 @@
                     },
                  "type":"",
                  "visible":true,
-                 "width":104,
-                 "x":608,
-                 "y":16
+                 "width":112,
+                 "x":624,
+                 "y":0
                 }],
          "opacity":1,
          "type":"objectgroup",

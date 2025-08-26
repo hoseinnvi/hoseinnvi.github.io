@@ -359,19 +359,19 @@
 </data>
  </layer>
  <objectgroup id="23" name="text">
-  <object id="1" x="208" y="16" width="105.167" height="19">
+  <object id="1" x="224" y="0" width="105.167" height="19">
    <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">Computer Vision</text>
   </object>
-  <object id="7" x="400" y="16" width="70.834" height="19">
+  <object id="7" x="416" y="0" width="70.834" height="19">
    <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">NLP &amp; LLMs</text>
   </object>
-  <object id="8" x="560" y="16" width="61.833" height="16">
+  <object id="8" x="576" y="0" width="61.833" height="16">
    <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">Agentic AI</text>
   </object>
   <object id="10" x="688" y="160" width="15.1971" height="11.3636">
    <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">RL</text>
   </object>
-  <object id="17" x="13.1667" y="151.833" width="50.8333" height="19">
+  <object id="17" x="32" y="144" width="50.8333" height="19">
    <text fontfamily="Sans Serif Collection" wrap="1" color="#ffffff" halign="center" valign="center">More</text>
   </object>
  </objectgroup>
