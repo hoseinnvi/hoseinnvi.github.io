@@ -121,91 +121,102 @@ function isDown(k) {
    ===================================== */
 
 async function loadMap(jsonPath) {
-  // 1) Download the JSON file (e.g., "maps/outdoor.json")
-  const res = await fetch(jsonPath);
-  if (!res.ok) throw new Error(`Failed to load map: ${jsonPath}`);
-  const map = await res.json();
+  // Reference to the loading overlay, if present
+  const loadingEl = document.getElementById('loading');
+  try {
+    // 1) Download the JSON file (e.g., "maps/outdoor.json")
+    const res = await fetch(jsonPath);
+    if (!res.ok) throw new Error(`Failed to load map: ${jsonPath}`);
+    const map = await res.json();
 
-  // 2) Set this as the active map and reset state extracted from it
-  currentMap = map;
-  tilesetImages = [];
-  solidRects = [];
-  portals = [];
-  spawns = {};
+    // 2) Set this as the active map and reset state extracted from it
+    currentMap = map;
+    tilesetImages = [];
+    solidRects = [];
+    portals = [];
+    spawns = {};
 
-  // 3) Size the canvas to match the map (width × tilewidth, height × tileheight)
-  canvas.width  = map.width  * map.tilewidth;
-  canvas.height = map.height * map.tileheight;
+    // 3) Size the canvas to match the map (width × tilewidth, height × tileheight)
+    canvas.width  = map.width  * map.tilewidth;
+    canvas.height = map.height * map.tileheight;
 
-  // 4) Load each tileset image the map references so we can draw tiles later
-  //    (Tiled gives us firstgid — the first tile id in that tileset)
-  for (const ts of map.tilesets) {
-    const img = new Image();
-    // Some exported maps include "../" in the image path; strip it so it works on GitHub Pages
-    let src = ts.image;
-    if (src.startsWith("../")) {
-      src = src.substring(3);
+    // 4) Load each tileset image the map references so we can draw tiles later
+    //    (Tiled gives us firstgid — the first tile id in that tileset)
+    for (const ts of map.tilesets) {
+      const img = new Image();
+      // Some exported maps include "../" in the image path; strip it so it works on GitHub Pages
+      let src = ts.image;
+      if (src.startsWith("../")) {
+        src = src.substring(3);
+      }
+      img.src = src; // example: "assets/grounds.png" (path is relative to the JSON)
+      // Wait for the image to finish loading (so drawImage won’t fail)
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+      });
+
+      // How many columns of tiles are in this image?
+      const columns = Math.floor(ts.imagewidth / map.tilewidth);
+
+      // Save only what we need for drawing
+      tilesetImages.push({
+        firstgid: ts.firstgid, // gid threshold where this tileset starts
+        columns,               // how many tiles per row in the image
+        img                    // the actual HTMLImageElement
+      });
     }
-    img.src = src; // example: "assets/grounds.png" (path is relative to the JSON)
-    // Wait for the image to finish loading (so drawImage won’t fail)
-    await new Promise((resolve, reject) => {
-      img.onload = resolve;
-      img.onerror = reject;
-    });
 
-    // How many columns of tiles are in this image?
-    const columns = Math.floor(ts.imagewidth / map.tilewidth);
+    // 5) Read useful object layers out of the map (Collision, Portals, Spawns)
+    for (const layer of map.layers) {
+      // Only care about object layers here
+      if (layer.type !== "objectgroup") continue;
 
-    // Save only what we need for drawing
-    tilesetImages.push({
-      firstgid: ts.firstgid, // gid threshold where this tileset starts
-      columns,               // how many tiles per row in the image
-      img                    // the actual HTMLImageElement
-    });
-  }
+      if (layer.name === "Collision") {
+        // Each object is a rectangle you shouldn’t be able to walk through
+        for (const o of layer.objects) {
+          solidRects.push({ x: o.x, y: o.y, w: o.width, h: o.height });
+        }
+      }
 
-  // 5) Read useful object layers out of the map (Collision, Portals, Spawns)
-  for (const layer of map.layers) {
-    // Only care about object layers here
-    if (layer.type !== "objectgroup") continue;
+      if (layer.name === "Portals") {
+        // Portals need their custom properties from Tiled
+        for (const o of layer.objects) {
+          const P = toPropMap(o.properties);  // convert [{name,value}, …] -> {name:value, …}
+          portals.push({
+            x: o.x, y: o.y, w: o.width, h: o.height,
+            auto: !!P.auto,                            // open automatically on overlap?
+            prompt: P.prompt || "E: Enter",            // text to show (you can render later)
+            targetMap: P.targetMap,                    // e.g., "maps/indoor.json"
+            targetSpawn: P.targetSpawn                 // e.g., "toLibrary"
+          });
+        }
+      }
 
-    if (layer.name === "Collision") {
-      // Each object is a rectangle you shouldn’t be able to walk through
-      for (const o of layer.objects) {
-        solidRects.push({ x: o.x, y: o.y, w: o.width, h: o.height });
+      if (layer.name === "Spawns") {
+        // Spawns are points with an "id" property (and optional facing)
+        for (const o of layer.objects) {
+          const P = toPropMap(o.properties);
+          spawns[P.id] = { x: o.x, y: o.y, facing: P.facing || "down" };
+        }
       }
     }
 
-    if (layer.name === "Portals") {
-      // Portals need their custom properties from Tiled
-      for (const o of layer.objects) {
-        const P = toPropMap(o.properties);  // convert [{name,value}, …] -> {name:value, …}
-        portals.push({
-          x: o.x, y: o.y, w: o.width, h: o.height,
-          auto: !!P.auto,                            // open automatically on overlap?
-          prompt: P.prompt || "E: Enter",            // text to show (you can render later)
-          targetMap: P.targetMap,                    // e.g., "maps/indoor.json"
-          targetSpawn: P.targetSpawn                 // e.g., "toLibrary"
-        });
-      }
+    // 6) If someone asked us to spawn at a specific spawn id, do it now
+    if (player.spawnId && spawns[player.spawnId]) {
+      player.x = spawns[player.spawnId].x;
+      player.y = spawns[player.spawnId].y;
     }
-
-    if (layer.name === "Spawns") {
-      // Spawns are points with an "id" property (and optional facing)
-      for (const o of layer.objects) {
-        const P = toPropMap(o.properties);
-        spawns[P.id] = { x: o.x, y: o.y, facing: P.facing || "down" };
-      }
+    // Clear spawnId so the next map won’t reuse it by accident
+    player.spawnId = null;
+  } catch (err) {
+    console.error(err);
+  } finally {
+    // Regardless of whether the map loaded successfully, hide any "Loading…" overlay
+    if (loadingEl) {
+      loadingEl.style.display = 'none';
     }
   }
-
-  // 6) If someone asked us to spawn at a specific spawn id, do it now
-  if (player.spawnId && spawns[player.spawnId]) {
-    player.x = spawns[player.spawnId].x;
-    player.y = spawns[player.spawnId].y;
-  }
-  // Clear spawnId so the next map won’t reuse it by accident
-  player.spawnId = null;
 }
 
 // Utility: convert Tiled’s property array into a plain object
@@ -315,38 +326,46 @@ function drawText() {
       // Only render visible objects with a text property
       if (!obj.visible || !obj.text) continue;
       const t = obj.text;
-      // Build font string honouring bold/italic
+      // Build font string honouring bold/italic and fall back to sans-serif if the
+      // requested font is unavailable on the web. Many system fonts like
+      // "Sitka" aren’t installed by default on browsers, so use a fallback
+      // regardless of the value specified in the map.
       const size = t.pixelsize || 16;
-      const family = t.fontfamily || "sans-serif";
+      const family = (t.fontfamily && t.fontfamily.trim()) || "sans-serif";
       const weight = t.bold ? "bold " : "";
       const style = t.italic ? "italic " : "";
       ctx.font = `${style}${weight}${size}px ${family}`;
       ctx.fillStyle = t.color || "#ffffff";
-      // Text alignment: default to left; map Tiled halign values
-      ctx.textAlign = t.halign || "left";
-      // Vertical alignment: use baseline defaults; map Tiled valign if present
-      switch ((t.valign || "top").toLowerCase()) {
-        case "center":
-          ctx.textBaseline = "middle";
-          break;
-        case "bottom":
-          ctx.textBaseline = "bottom";
-          break;
-        default:
-          ctx.textBaseline = "top";
-          break;
-      }
-      // Compute position. In Tiled, text objects’ x,y mark the top-left corner.
-      // We adjust y by the baseline for top alignment when no object.height.
+      // Horizontal alignment: adjust x coordinate based on halign and object width
       let x = obj.x;
-      let y = obj.y;
-      if (ctx.textBaseline === "top") {
-        // shift down by nothing; baseline is at top
-      } else if (ctx.textBaseline === "middle") {
-        y = obj.y + (obj.height || size) / 2;
-      } else if (ctx.textBaseline === "bottom") {
-        y = obj.y + (obj.height || size);
+      const halign = (t.halign || "left").toLowerCase();
+      if (halign === "center") {
+        ctx.textAlign = "center";
+        x = obj.x + (obj.width || 0) / 2;
+      } else if (halign === "right" || halign === "justify") {
+        ctx.textAlign = "right";
+        x = obj.x + (obj.width || 0);
+      } else {
+        ctx.textAlign = "left";
       }
+      // Vertical alignment: Tiled stores y as the bottom of the bounding box
+      // (see TMX specification). Compute a baseline y based on valign and object
+      // height. Use top alignment by default and subtract the height so that the
+      // first line appears at the top of the bounding box. Note that textBaseline
+      // is kept at 'alphabetic' (the default), because we handle vertical offset
+      // ourselves.
+      let y;
+      const height = obj.height || size;
+      const valign = (t.valign || "top").toLowerCase();
+      if (valign === "center") {
+        y = obj.y - height / 2 + size / 2;
+      } else if (valign === "bottom") {
+        y = obj.y;
+      } else {
+        // top
+        y = obj.y - height + size;
+      }
+      ctx.textBaseline = "alphabetic";
       const text = t.text || "";
       // If wrapping is enabled and width provided, manually wrap lines
       if (t.wrap && obj.width) {
