@@ -235,8 +235,8 @@
 </data>
  </layer>
  <objectgroup id="6" name="text">
-  <object id="1" x="600" y="9" width="139" height="19">
-   <text fontfamily="Sitka" wrap="1" color="#ffffff" bold="1">Game Mentor</text>
+  <object id="1" x="604" y="-4" width="139" height="39">
+   <text fontfamily="Sans Serif Collection" wrap="1" color="#ffffff">Game Mentor</text>
   </object>
  </objectgroup>
  <layer id="7" name="decorlow" width="48" height="32">

@@ -71,7 +71,7 @@
                  "visible":true,
                  "width":0,
                  "x":48,
-                 "y":448
+                 "y":432
                 }],
          "opacity":1,
          "type":"objectgroup",
@@ -474,23 +474,22 @@
          "name":"text",
          "objects":[
                 {
-                 "height":19,
+                 "height":39,
                  "id":1,
                  "name":"",
                  "rotation":0,
                  "text":
                     {
-                     "bold":true,
                      "color":"#ffffff",
-                     "fontfamily":"Sitka",
+                     "fontfamily":"Sans Serif Collection",
                      "text":"Game Mentor",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
                  "width":139,
-                 "x":600,
-                 "y":9
+                 "x":604,
+                 "y":-4
                 }],
          "opacity":1,
          "type":"objectgroup",

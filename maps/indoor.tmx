@@ -359,20 +359,20 @@
 </data>
  </layer>
  <objectgroup id="23" name="text">
-  <object id="1" x="200.5" y="9.66667" width="112.667" height="19">
-   <text fontfamily="Sitka" pixelsize="12" wrap="1" color="#ffffff" bold="1" italic="1">Computer Vision</text>
+  <object id="1" x="208" y="0" width="112.667" height="38.3333">
+   <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff">Computer Vision</text>
   </object>
-  <object id="7" x="393.166" y="9.5" width="101.667" height="19">
-   <text fontfamily="Sitka" pixelsize="12" wrap="1" color="#ffffff" bold="1" italic="1">NLP &amp; LLMs</text>
+  <object id="7" x="400" y="0" width="101.667" height="22.5">
+   <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff">NLP &amp; LLMs</text>
   </object>
-  <object id="8" x="562.167" y="9.5" width="101.667" height="19">
-   <text fontfamily="Sitka" pixelsize="12" wrap="1" color="#ffffff" bold="1">Agentic AI</text>
+  <object id="8" x="560" y="0" width="101.667" height="22.5">
+   <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff">Agentic AI</text>
   </object>
   <object id="10" x="627.712" y="147.318" width="123.485" height="27.3636">
-   <text fontfamily="Sitka" pixelsize="12" wrap="1" color="#ffffff" bold="1" halign="center" valign="center">RL</text>
+   <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">RL</text>
   </object>
-  <object id="17" x="13.1667" y="151.833" width="83" height="19">
-   <text fontfamily="Sitka" wrap="1" color="#ffffff" bold="1">More</text>
+  <object id="17" x="14" y="139" width="83" height="32">
+   <text fontfamily="Sans Serif Collection" wrap="1" color="#ffffff">More</text>
   </object>
  </objectgroup>
 </map>
