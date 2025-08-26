@@ -827,7 +827,7 @@
          "name":"text",
          "objects":[
                 {
-                 "height":19,
+                 "height":16,
                  "id":2,
                  "name":"",
                  "rotation":0,
@@ -843,9 +843,9 @@
                     },
                  "type":"",
                  "visible":true,
-                 "width":83,
-                 "x":407,
-                 "y":412
+                 "width":58,
+                 "x":416,
+                 "y":416
                 }],
          "opacity":1,
          "type":"objectgroup",

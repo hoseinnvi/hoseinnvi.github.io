@@ -474,7 +474,7 @@
          "name":"text",
          "objects":[
                 {
-                 "height":39,
+                 "height":23,
                  "id":1,
                  "name":"",
                  "rotation":0,
@@ -482,14 +482,16 @@
                     {
                      "color":"#ffffff",
                      "fontfamily":"Sans Serif Collection",
+                     "halign":"center",
                      "text":"Game Mentor",
+                     "valign":"center",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
-                 "width":139,
-                 "x":604,
-                 "y":-4
+                 "width":104,
+                 "x":608,
+                 "y":16
                 }],
          "opacity":1,
          "type":"objectgroup",

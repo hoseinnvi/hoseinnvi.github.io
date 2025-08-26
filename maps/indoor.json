@@ -836,7 +836,7 @@
          "name":"text",
          "objects":[
                 {
-                 "height":38.33333,
+                 "height":19,
                  "id":1,
                  "name":"",
                  "rotation":0,
@@ -844,18 +844,20 @@
                     {
                      "color":"#ffffff",
                      "fontfamily":"Sans Serif Collection",
+                     "halign":"center",
                      "pixelsize":12,
                      "text":"Computer Vision",
+                     "valign":"center",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
-                 "width":112.667,
+                 "width":105.167,
                  "x":208,
-                 "y":0
+                 "y":16
                 }, 
                 {
-                 "height":22.5,
+                 "height":19,
                  "id":7,
                  "name":"",
                  "rotation":0,
@@ -863,18 +865,20 @@
                     {
                      "color":"#ffffff",
                      "fontfamily":"Sans Serif Collection",
+                     "halign":"center",
                      "pixelsize":12,
                      "text":"NLP & LLMs",
+                     "valign":"center",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
-                 "width":101.667,
+                 "width":70.834,
                  "x":400,
-                 "y":0
+                 "y":16
                 }, 
                 {
-                 "height":22.5,
+                 "height":16,
                  "id":8,
                  "name":"",
                  "rotation":0,
@@ -882,18 +886,20 @@
                     {
                      "color":"#ffffff",
                      "fontfamily":"Sans Serif Collection",
+                     "halign":"center",
                      "pixelsize":12,
                      "text":"Agentic AI",
+                     "valign":"center",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
-                 "width":101.667,
+                 "width":61.833,
                  "x":560,
-                 "y":0
+                 "y":16
                 }, 
                 {
-                 "height":27.3636363636364,
+                 "height":11.3636363636364,
                  "id":10,
                  "name":"",
                  "rotation":0,
@@ -909,12 +915,12 @@
                     },
                  "type":"",
                  "visible":true,
-                 "width":123.485181818182,
-                 "x":627.711954545455,
-                 "y":147.318181818182
+                 "width":15.1971363636363,
+                 "x":688,
+                 "y":160
                 }, 
                 {
-                 "height":32,
+                 "height":19,
                  "id":17,
                  "name":"",
                  "rotation":0,
@@ -922,14 +928,16 @@
                     {
                      "color":"#ffffff",
                      "fontfamily":"Sans Serif Collection",
+                     "halign":"center",
                      "text":"More",
+                     "valign":"center",
                      "wrap":true
                     },
                  "type":"",
                  "visible":true,
-                 "width":83,
-                 "x":14,
-                 "y":139
+                 "width":50.8333333333333,
+                 "x":13.1666666666667,
+                 "y":151.833333333333
                 }],
          "opacity":1,
          "type":"objectgroup",
