@@ -1,39 +1,84 @@
 /* =========================================================================
-   game.js — A tiny, readable top-down “walk around” engine (improved)
+   improved_game.js — Top-down adventure engine with advanced sprite handling
+   -------------------------------------------------------------------------
+
+   This version of the engine builds upon the basic example found in
+   ``game.js`` and adds several features to make the most of a multi-frame
+   character sprite sheet.  The improvements include:
+
+   • Robust sprite loading: the player's sprite source is configurable and
+     defaults to ``F_01.png`` (three columns by four rows).  The boot
+     sequence waits for the image to load but will time out after a few
+     seconds rather than hang forever if the image is missing.  If your
+     sprite uses a different filename (e.g. ``F-01.png``), update
+     ``PLAYER_SPRITE_SRC`` accordingly.
+
+   • Full animation support: the player cycles through three frames when
+     walking in any of the four directions.  The idle frame is the middle
+     frame of each row.  A "run" mode can be toggled by holding the
+     ``Shift`` key; running speeds up the character and the animation.
+
+   • Improved facing logic: diagonal movement chooses the dominant axis
+     (horizontal or vertical) to determine the facing.  This ensures the
+     sprite sheet is used correctly when moving in two directions.
+
+   • Better error handling: loading maps or assets will report errors into
+     the ``#loading`` element instead of silently failing.  This prevents
+     the "Stuck at Loading…" problem when assets fail to load.
+
+   • Text object rendering: like the previous version, this script draws
+     Tiled text objects with respect to font, size, alignment and colour.
+
+   To use this file, include it in your HTML page after the canvas element.
+   Ensure that your ``maps`` and ``assets`` folders are accessible over
+   HTTP so that ``fetch()`` can retrieve the map JSON and images.
    ========================================================================*/
 
-/* =========================
-   STEP 0 — Canvas and basics
-   ========================= */
+// STEP 0 — Canvas and basic configuration
 const canvas = document.getElementById("game");
 const ctx    = canvas.getContext("2d");
 
+// Tiled flip flags.  These are not used in this example but are defined
+// here for completeness.
 const FLIP_H  = 0x80000000;
 const FLIP_V  = 0x40000000;
 const FLIP_D  = 0x20000000;
 const GID_MASK = ~(FLIP_H | FLIP_V | FLIP_D) >>> 0;
 
-// Character scale & speed
-const CHARACTER_SCALE = 3;         // make the character 2x/3x larger
-const FRAME_W = 16, FRAME_H = 16;  // your sheet is 3×4 frames of 16×16
+// Character sprite configuration.  Adjust ``FRAME_W`` and ``FRAME_H`` to
+// match the width/height of a single cell in your sprite sheet.  The
+// default of 16×16 corresponds to a 3×4 sprite sheet like F_01.png.
+const FRAME_W = 16;
+const FRAME_H = 16;
+const SPRITE_COLUMNS = 3;
+const SPRITE_ROWS    = 4;
+
+// Scaling the player up for easier visibility.  Set to 1 for no scaling
+// or 2/3 to make the character larger relative to the map.
+const CHARACTER_SCALE = 3;
 const PLAYER_W = FRAME_W * CHARACTER_SCALE;
 const PLAYER_H = FRAME_H * CHARACTER_SCALE;
-const SPEED    = 100; // px/s
 
-// Simple 3-frame walk animation timing
-const ANIM_FPS = 8;          // frames per second while walking
-const ANIM_LEN = 3;          // 3 columns per row
-let animTime = 0;            // accumulates dt
+// Movement speeds (pixels per second).  ``WALK_SPEED`` applies when
+// walking; ``RUN_SPEED`` multiplies ``WALK_SPEED`` when the Shift key
+// is held down.  ``WALK_ANIM_FPS`` and ``RUN_ANIM_FPS`` control how
+// quickly the sprite animation cycles while walking or running.
+const WALK_SPEED     = 100;
+const RUN_MULTIPLIER = 1.7;
+const WALK_ANIM_FPS  = 8;
+const RUN_ANIM_FPS   = 12;
 
 // Player state
 const player = {
   x: 0, y: 0, w: PLAYER_W, h: PLAYER_H,
   vx: 0, vy: 0,
   spawnId: null,
-  facing: "down",
+  facing: "down", // "up", "down", "left", "right"
   sprite: new Image(),
-  // NOTE: filename uses dash like your asset: F-01.png
-  spriteSrc: "./assets/characters/F-01.png",
+  // Change this to match your actual filename if necessary.  The default
+  // assumes ``F_01.png`` (underscore).  If your file uses a hyphen
+  // (``F-01.png``), update this string accordingly.
+  spriteSrc: "./assets/characters/F_01.png",
 };
 
 // Current map and tileset images
@@ -51,19 +96,20 @@ const keys = Object.create(null);
 // Timing variables for the main loop
 let lastTime = 0;
 let wantUse  = false;
+let animTime = 0;
 
-// Path helpers
+// Helper functions to resolve paths relative to the map JSON
 function dirname(path) {
   const idx = path.lastIndexOf("/");
   return idx >= 0 ? path.slice(0, idx + 1) : "";
 }
 function join(base, rel) {
-  if (/^(https?:)?\//.test(rel)) return rel; // absolute or protocol-relative
+  if (/^(https?:)?\//.test(rel)) return rel;
   if (rel.startsWith("maps/")) return rel;
   return base + rel;
 }
 
-// Keyboard
+// Keyboard listeners
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   keys[k] = true;
@@ -74,9 +120,7 @@ window.addEventListener("keyup", (e) => {
   keys[k] = false;
 });
 
-/* =========================
-   STEP 1 — Map loading
-   ========================= */
+/* STEP 1 — Map loading */
 function toPropMap(props) {
   const out = Object.create(null);
   if (!props) return out;
@@ -88,8 +132,15 @@ function resizeCanvasToMap(map) {
   canvas.height = map.height * map.tileheight;
 }
 
+// Load a Tiled map and all of its tileset images.  Errors are caught and
+// reported into the loading overlay instead of leaving the game stuck.
 async function loadMap(jsonPath) {
-  const res = await fetch(jsonPath);
+  let res;
+  try {
+    res = await fetch(jsonPath);
+  } catch (err) {
+    throw new Error(`Unable to fetch map: ${jsonPath} (${err.message})`);
+  }
   if (!res.ok) throw new Error(`Failed to load map: ${jsonPath}`);
   const map = await res.json();
 
@@ -104,11 +155,15 @@ async function loadMap(jsonPath) {
 
   resizeCanvasToMap(map);
 
-  // --- Load tilesets
+  // Load tilesets
   for (const ts of map.tilesets) {
     const img = new Image();
     img.src = join(base, ts.image);
-    await img.decode();
+    try {
+      await img.decode();
+    } catch (err) {
+      console.warn(`Failed to decode tileset image ${ts.image}:`, err);
+    }
     const columns = Math.floor(ts.imagewidth / map.tilewidth);
     tilesetImages.push({
       firstgid: ts.firstgid,
@@ -120,7 +175,7 @@ async function loadMap(jsonPath) {
     });
   }
 
-  // --- Preload images for Image Layers
+  // Preload images for Image Layers
   for (const layer of map.layers) {
     if (layer.type === "imagelayer" && layer.image) {
       try {
@@ -134,10 +189,9 @@ async function loadMap(jsonPath) {
     }
   }
 
-  // --- Extract object layers
+  // Extract objects from object layers
   for (const layer of map.layers) {
     if (layer.type !== "objectgroup") continue;
-
     if (layer.name === "Collision") {
       for (const o of layer.objects) {
         solidRects.push({ x: o.x, y: o.y, w: o.width, h: o.height });
@@ -168,7 +222,7 @@ async function loadMap(jsonPath) {
     }
   }
 
-  // Place player at chosen spawn (feet on point, centered)
+  // Position player at spawn
   if (player.spawnId && spawns[player.spawnId]) {
     const s = spawns[player.spawnId];
     player.x = Math.round(s.x - player.w / 2);
@@ -177,31 +231,32 @@ async function loadMap(jsonPath) {
     player.spawnId = null;
   }
 
-  // Ensure sprite is loaded
+  // Load the player's sprite if not already
   if (!player.sprite.src) {
     player.sprite.src = player.spriteSrc;
-    await player.sprite.decode?.().catch(() => {});
+    try {
+      await player.sprite.decode?.();
+    } catch (e) {
+      // If decode fails, log a warning but continue.  The sprite may still
+      // load asynchronously via the 'load' event (below).
+      console.warn(`Failed to decode player sprite ${player.spriteSrc}:`, e);
+    }
   }
 }
 
-/* =========================
-   STEP 2 — Map rendering
-   ========================= */
+/* STEP 2 — Map rendering */
 function drawMap() {
   for (const layer of currentMap.layers) {
     if (layer.visible === false) continue;
-
-    // Image layers (e.g., composite NPCs)
     if (layer.type === "imagelayer" && layer._img) {
       ctx.save();
       if (typeof layer.opacity === "number") ctx.globalAlpha = layer.opacity;
-      const ox = layer.offsetx || 0, oy = layer.offsety || 0;
+      const ox = layer.offsetx || 0;
+      const oy = layer.offsety || 0;
       ctx.drawImage(layer._img, Math.round(ox), Math.round(oy));
       ctx.restore();
       continue;
     }
-
-    // Tile layers
     if (layer.type === "tilelayer") {
       const data = layer.data;
       for (let i = 0; i < data.length; i++) {
@@ -216,8 +271,6 @@ function drawMap() {
         const sy = Math.floor(localId / ts.columns) * currentMap.tileheight;
         const dx = (i % currentMap.width) * currentMap.tilewidth;
         const dy = Math.floor(i / currentMap.width) * currentMap.tileheight;
-        ctx.save();
-        // (Optional) apply flips based on rawGid & FLIP_* if needed
         ctx.drawImage(
           ts.img,
           sx, sy,
@@ -225,15 +278,12 @@ function drawMap() {
           dx, dy,
           currentMap.tilewidth, currentMap.tileheight
         );
-        ctx.restore();
       }
       continue;
     }
-
-    // NEW: Draw Tiled Text Objects from any Object Layer
     if (layer.type === "objectgroup" && layer.objects?.length) {
       for (const o of layer.objects) {
-        if (!o.text) continue; // only handle text objects here
+        if (!o.text) continue;
         drawTiledTextObject(o, layer);
       }
       continue;
@@ -241,27 +291,20 @@ function drawMap() {
   }
 }
 
-// Render a Tiled text object (font, size, wrap, color, alignment)
 function drawTiledTextObject(o, layer) {
   const t = o.text;
   if (!t || t.text == null) return;
-
   ctx.save();
-
-  // Opacity from layer
   if (typeof layer.opacity === "number") ctx.globalAlpha = layer.opacity;
-
   // Font
   const size = (t.pixelsize || 16);
   const family = t.fontfamily || "sans-serif";
   const weight = t.bold ? "bold" : "normal";
   const style  = t.italic ? "italic" : "normal";
   ctx.font = `${style} ${weight} ${size}px ${family}`;
-
-  // Color (Tiled stores as #AARRGGBB or #RRGGBB; handle both)
+  // Colour
   let color = t.color || "#000000";
   if (color.startsWith("#") && color.length === 9) {
-    // #AARRGGBB -> set fillStyle with RGBA
     const a = parseInt(color.slice(1, 3), 16) / 255;
     const r = parseInt(color.slice(3, 5), 16);
     const g = parseInt(color.slice(5, 7), 16);
@@ -270,24 +313,15 @@ function drawTiledTextObject(o, layer) {
   } else {
     ctx.fillStyle = color;
   }
-
   // Alignment
-  const h = t.halign || "left";   // "left"|"center"|"right"|"justify"
-  const v = t.valign || "top";    // "top"|"center"|"bottom"
-  if (h === "center") ctx.textAlign = "center";
-  else if (h === "right" || h === "justify") ctx.textAlign = "right";
-  else ctx.textAlign = "left";
-
-  if (v === "center") ctx.textBaseline = "middle";
-  else if (v === "bottom") ctx.textBaseline = "bottom";
-  else ctx.textBaseline = "top";
-
-  // Position & wrapping
+  const h = t.halign || "left";
+  const v = t.valign || "top";
+  ctx.textAlign = h === "center" ? "center" : h === "right" || h === "justify" ? "right" : "left";
+  ctx.textBaseline = v === "center" ? "middle" : v === "bottom" ? "bottom" : "top";
+  // Position/wrap
   const x = Math.round(o.x);
   const y = Math.round(o.y);
   const maxW = o.width || undefined;
-
-  // Outline if requested
   if (t.stroke && t.stroke.color) {
     const sw = t.stroke.width || 1;
     ctx.lineWidth = sw;
@@ -296,15 +330,12 @@ function drawTiledTextObject(o, layer) {
       ctx.strokeText(line, lx, ly);
     });
   }
-
   drawWrappedText(t.text, x, y, maxW, size, (line, lx, ly) => {
     ctx.fillText(line, lx, ly);
   });
-
   ctx.restore();
 }
 
-// Simple word-wrap helper for canvas text
 function drawWrappedText(text, x, y, maxWidth, lineHeight, painter) {
   if (!maxWidth) {
     painter(text, x, y);
@@ -336,37 +367,36 @@ function pickTilesetFor(gid) {
   return best;
 }
 
-/* =========================
-   STEP 3 — Movement & collision
-   ========================= */
+/* STEP 3 — Movement & collision */
 function update(dt) {
-  const speed = SPEED;
-  let vx = 0, vy = 0;
+  // Determine if run key is held (Shift)
+  const isRunning = !!(keys["shift"] || keys["shiftleft"] || keys["shiftright"]);
+  const speed = isRunning ? WALK_SPEED * RUN_MULTIPLIER : WALK_SPEED;
+  let vx = 0;
+  let vy = 0;
   if (keys["arrowleft"] || keys["a"])  vx -= speed;
   if (keys["arrowright"]|| keys["d"])  vx += speed;
   if (keys["arrowup"]   || keys["w"])  vy -= speed;
   if (keys["arrowdown"] || keys["s"])  vy += speed;
-
-  // Normalise diagonal speed
+  // Normalise diagonal
   if (vx && vy) {
     const inv = 1 / Math.sqrt(2);
     vx *= inv; vy *= inv;
   }
-
   player.vx = vx;
   player.vy = vy;
-
-  // Update facing
-  if (vx < 0) player.facing = "left";
-  else if (vx > 0) player.facing = "right";
-  else if (vy < 0) player.facing = "up";
-  else if (vy > 0) player.facing = "down";
-
-  // Advance walk animation only while moving
+  // Update facing.  When moving diagonally, choose the dominant axis.
+  if (Math.abs(vx) > Math.abs(vy)) {
+    if (vx < 0) player.facing = "left";
+    else if (vx > 0) player.facing = "right";
+  } else if (Math.abs(vy) > 0) {
+    if (vy < 0) player.facing = "up";
+    else if (vy > 0) player.facing = "down";
+  }
+  // Advance animation time only when moving
   if (vx || vy) animTime += dt;
-  else animTime = 0; // idle -> middle frame
-
-  // Move on X, resolve
+  else animTime = 0;
+  // Move X
   player.x += player.vx * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
@@ -374,7 +404,7 @@ function update(dt) {
       else if (player.vx < 0) player.x = r.x + r.w;
     }
   }
-  // Move on Y, resolve
+  // Move Y
   player.y += player.vy * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
@@ -389,9 +419,7 @@ function overlap(a, b) {
            a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
 
-/* =========================
-   STEP 4 — Portals & spawns
-   ========================= */
+/* STEP 4 — Portals & spawns */
 async function tryUsePortals() {
   const base = dirname(currentMap._jsonPath || "");
   for (const p of portals) {
@@ -406,26 +434,24 @@ async function tryUsePortals() {
   }
 }
 
-/* =========================
-   STEP 5 — Drawing sprites
-   ========================= */
-// Map facing to row in your 3×4 sprite sheet
+/* STEP 5 — Drawing the player sprite */
+// Row index for each facing direction
 function rowForFacing(facing) {
   switch (facing) {
     case "down":  return 0;
     case "left":  return 1;
     case "right": return 2;
     case "up":    return 3;
-    default:      return 0;
+    default:       return 0;
   }
 }
 
 function currentAnimCol() {
-  // idle -> middle frame (col 1)
+  // Use the middle frame when idle
   if (!(player.vx || player.vy)) return 1;
-  // walking -> cycle 0,1,2 at ANIM_FPS
-  const frame = Math.floor(animTime * ANIM_FPS) % ANIM_LEN;
-  return frame;
+  const isRunning = !!(keys["shift"] || keys["shiftleft"] || keys["shiftright"]);
+  const fps = isRunning ? RUN_ANIM_FPS : WALK_ANIM_FPS;
+  return Math.floor(animTime * fps) % SPRITE_COLUMNS;
 }
 
 function drawPlayer() {
@@ -433,18 +459,15 @@ function drawPlayer() {
   const row = rowForFacing(player.facing);
   const sx = col * FRAME_W;
   const sy = row * FRAME_H;
-
   ctx.drawImage(
     player.sprite,
-    sx, sy, FRAME_W, FRAME_H,              // source frame (UNSCALED)
-    Math.round(player.x), Math.round(player.y), // destination
-    player.w, player.h                      // scaled size
+    sx, sy, FRAME_W, FRAME_H,
+    Math.round(player.x), Math.round(player.y),
+    player.w, player.h
   );
 }
 
-/* ===============
-   STEP 6 — UI
-   =============== */
+/* STEP 6 — UI */
 const loadingEl = document.getElementById("loading");
 function showLoading(text = "Loading…") {
   if (!loadingEl) return;
@@ -456,34 +479,40 @@ function hideLoading() {
   loadingEl.style.display = "none";
 }
 
-/* =========================
-   STEP 7 — Game loop
-   ========================= */
+/* STEP 7 — Main loop */
 function loop(t) {
   const dt = Math.min(0.05, (t - lastTime) / 1000);
   lastTime = t;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-
   update(dt);
   drawMap();
   drawPlayer();
-
-  tryUsePortals().catch(console.error);
+  tryUsePortals().catch((err) => {
+    console.error(err);
+    if (loadingEl) loadingEl.textContent = "Error: " + err.message;
+  });
   wantUse = false;
-
   requestAnimationFrame(loop);
 }
 
-/* =========================
-   STEP 8 — Boot
-   ========================= */
+/* STEP 8 — Boot sequence */
 (async function boot() {
   try {
     showLoading("Loading map…");
+    // Attempt to load the player's sprite.  Use a timeout to avoid hanging
+    // forever if the image is missing.
     await new Promise((res) => {
-      player.sprite.addEventListener("load", res, { once: true });
-      player.sprite.src = player.spriteSrc; // "./assets/characters/F-01.png"
+      const timer = setTimeout(() => {
+        console.warn("Sprite load timed out; continuing without waiting");
+        res();
+      }, 3000);
+      player.sprite.addEventListener("load", () => {
+        clearTimeout(timer);
+        res();
+      }, { once: true });
+      player.sprite.src = player.spriteSrc;
     });
+    // Choose an initial map and spawn point here.  Modify as needed.
     player.spawnId = "toOut";
     await loadMap("maps/outdoor.json");
     hideLoading();
@@ -497,10 +526,11 @@ function loop(t) {
   }
 })();
 
-window.addEventListener("unhandledrejection", ev => {
-  console.error("Unhandled promise rejection:", ev.reason);
-  if (loadingEl) loadingEl.textContent = "Error: " + (ev.reason?.message || ev.reason);
+// Global error handlers for debugging
+window.addEventListener('unhandledrejection', ev => {
+  console.error('Unhandled promise rejection:', ev.reason);
+  if (loadingEl) loadingEl.textContent = 'Error: ' + (ev.reason?.message || ev.reason);
 });
-window.addEventListener("error", ev => {
-  console.error("Window error:", ev.error || ev.message);
+window.addEventListener('error', ev => {
+  console.error('Window error:', ev.error || ev.message);
 });
