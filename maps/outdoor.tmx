@@ -396,7 +396,7 @@
 </data>
  </layer>
  <objectgroup id="10" name="text">
-  <object id="2" x="448" y="416" width="58" height="16">
+  <object id="2" x="421" y="412" width="58" height="16">
    <text fontfamily="Sans Serif Collection" pixelsize="12" wrap="1" color="#ffffff" halign="center" valign="center">Resume</text>
   </object>
  </objectgroup>
