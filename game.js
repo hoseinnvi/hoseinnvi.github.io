@@ -338,15 +338,39 @@ function drawTiledTextObject(o, layer) {
   } else {
     ctx.fillStyle = color;
   }
-  // Alignment
-  const h = t.halign || "left";
-  const v = t.valign || "top";
-  ctx.textAlign = h === "center" ? "center" : h === "right" || h === "justify" ? "right" : "left";
-  ctx.textBaseline = v === "center" ? "middle" : v === "bottom" ? "bottom" : "top";
-  // Position/wrap
-  const x = Math.round(o.x);
-  const y = Math.round(o.y);
-  const maxW = o.width || undefined;
+  // Alignment and position
+  const width  = o.width  || 0;
+  const height = o.height || 0;
+  // Apply any layer offsets to the object position
+  const offsetX = layer.offsetx || 0;
+  const offsetY = layer.offsety || 0;
+  let x = o.x + offsetX;
+  let y = o.y + offsetY;
+  // Horizontal alignment: adjust x based on the object's width and alignment
+  const h = (t.halign || "left").toLowerCase();
+  if (h === "center") {
+    ctx.textAlign = "center";
+    x += width / 2;
+  } else if (h === "right" || h === "justify") {
+    ctx.textAlign = "right";
+    x += width;
+  } else {
+    ctx.textAlign = "left";
+  }
+  // Vertical alignment: adjust y based on the object's height and alignment
+  const v = (t.valign || "top").toLowerCase();
+  if (v === "center") {
+    ctx.textBaseline = "middle";
+    y += height / 2;
+  } else if (v === "bottom") {
+    ctx.textBaseline = "bottom";
+    y += height;
+  } else {
+    ctx.textBaseline = "top";
+  }
+  // Wrap width: only set a maximum width when width > 0.  Otherwise undefined
+  const maxW = width > 0 ? width : undefined;
+  // Draw stroke if defined
   if (t.stroke && t.stroke.color) {
     const sw = t.stroke.width || 1;
     ctx.lineWidth = sw;
@@ -355,6 +379,7 @@ function drawTiledTextObject(o, layer) {
       ctx.strokeText(line, lx, ly);
     });
   }
+  // Draw fill text
   drawWrappedText(t.text, x, y, maxW, size, (line, lx, ly) => {
     ctx.fillText(line, lx, ly);
   });
