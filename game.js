@@ -68,7 +68,7 @@ const player = {
   spawnId: null,
   facing: "down",
   sprite: new Image(),
-  spriteSrc: "./assets/characters/me.png",
+  spriteSrc: "./assets/characters/F_01.png",
 };
 
 // Current map and tileset images
