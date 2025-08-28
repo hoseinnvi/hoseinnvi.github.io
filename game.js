@@ -54,12 +54,18 @@ const FLIP_D  = 0x20000000;
 const GID_MASK = 0x1fffffff;
 
 // Player object.  You can customise the sprite via spriteSrc; the image
-// will be loaded at startup.
+// will be loaded at startup.  The `CHARACTER_SCALE` constant allows
+// you to enlarge the player sprite.  Set it to 2 or 3 to double or
+// triple the size of the character.  Both the on‑screen size and
+// collision box will scale accordingly.
+const CHARACTER_SCALE = 1; // Adjust to 2 or 3 for a larger character
 const player = {
   x: 0,
   y: 0,
-  w: 16,
-  h: 16,
+  // The base sprite frame size in pixels.  Tiled maps typically use
+  // 16×16 tiles; these values are multiplied by CHARACTER_SCALE below.
+  w: 16 * CHARACTER_SCALE,
+  h: 16 * CHARACTER_SCALE,
   speed: 120,
   sprite: new Image(),
   spriteSrc: "assets/characters/F_01.png",
@@ -176,8 +182,19 @@ async function loadMap(jsonPath) {
     }
     if (layer.name === "Spawns") {
       for (const o of layer.objects) {
+        // Determine a unique spawn identifier.  Tiled assigns each
+        // object a built‑in numeric `id` and a `name` property.  Users
+        // can also set a custom property named `id` on the object.  We
+        // prefer the custom property, then the object name, then fall
+        // back to the built‑in numeric id.  Without this, spawns may
+        // be ignored if the map author did not attach a custom
+        // property called "id" to the spawn.
         const P = toPropMap(o.properties);
-        spawns[P.id] = {
+        const spawnKey = P.id || o.name || String(o.id);
+        // Record the raw x/y coordinates of the spawn.  Tiled stores
+        // point objects with (x,y) at their centre/bottom.  When
+        // positioning the player we account for the player's size.
+        spawns[spawnKey] = {
           x: o.x,
           y: o.y,
           facing: P.facing || "down",
@@ -189,9 +206,17 @@ async function loadMap(jsonPath) {
   // Position the player at the selected spawn point.  After use,
   // player.spawnId is cleared so subsequent maps load at default.
   if (player.spawnId && spawns[player.spawnId]) {
-    player.x = spawns[player.spawnId].x;
-    player.y = spawns[player.spawnId].y;
+    const s = spawns[player.spawnId];
+    // Align the player so that its feet stand on the spawn point and
+    // it's centred horizontally.  Tiled encodes point objects such that
+    // the coordinate refers to the bottom of the object.  We therefore
+    // subtract the player's height and half its width from the spawn.
+    player.x = s.x - player.w / 2;
+    player.y = s.y - player.h;
+    // Optionally you could set player.facing = s.facing here if
+    // supporting animations for different orientations.
   }
+  // Clear spawnId to avoid reapplying it every frame
   player.spawnId = null;
 }
 
