@@ -62,7 +62,7 @@ const player = {
   h: 16,
   speed: 120,
   sprite: new Image(),
-  spriteSrc: "characters/F_01.png",
+  spriteSrc: "assets/characters/F_01.png",
   spawnId: "toHouse"
 };
 
