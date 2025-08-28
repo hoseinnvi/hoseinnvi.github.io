@@ -1,21 +1,21 @@
 /* =========================================================================
-   game.js — A tiny, readable top‑down “walk around” engine (improved)
+   game.js — A tiny, readable top-down “walk around” engine (improved)
    -------------------------------------------------------------------------
 
    This file implements a simple 2D adventure framework for Tiled maps. The
    improvements over the original include:
 
-   1) Resolving tileset and portal paths relative to the map JSON file.  
+   1) Resolving tileset and portal paths relative to the map JSON file.
       Tiled stores paths relative to the JSON; without resolving them
-      properly the browser would look for images relative to index.html.  
+      properly the browser would look for images relative to index.html.
       The helper functions `dirname()` and `join()` take care of this.
-   2) Stripping flip bits from tile global IDs.  
+   2) Stripping flip bits from tile global IDs.
       Tiled encodes horizontal/vertical/diagonal flips in the high bits of
       each tile's gid.  These bits must be masked off before indexing into
       tilesets; otherwise you'll see empty or wrong tiles drawn.
-   3) Showing and hiding a loading overlay.  
+   3) Showing and hiding a loading overlay.
       A simple `<div id="loading">` lives in index.html.  We expose
-      `showLoading()` and `hideLoading()` to toggle its visibility.  
+      `showLoading()` and `hideLoading()` to toggle its visibility.
       Any fatal errors will also print into that element.
    4) Remembering where the current map came from so that portals can load
       their target maps relative to the original JSON folder.
@@ -26,16 +26,18 @@
 
    • Load a Tiled map (see `loadMap`).
    • Draw its tile layers onto the canvas (see `drawMap`).
+   • Preload and draw Image Layers (so “NPCs” image layers show up).
    • Extract Collision, Portals and Spawns from object layers.
    • Move a player rectangle with WASD/arrow keys; block it against
-     collision rectangles and allow it to use portals.  
+     collision rectangles and allow it to use portals.
    • Switch maps when the player touches a portal, placing them at the
      appropriate spawn in the next map.
    • Hide the loading overlay once everything is ready.
 
    Tip: search for “STEP” markers in the comments to see the main
    responsibilities.
-   ========================================================================= */
+   ===================================
+====================================== */
 
 /* =========================
    STEP 0 — Canvas and basics
@@ -51,33 +53,32 @@ const ctx    = canvas.getContext("2d");
 const FLIP_H  = 0x80000000;
 const FLIP_V  = 0x40000000;
 const FLIP_D  = 0x20000000;
-const GID_MASK = 0x1fffffff;
+const GID_MASK = ~(FLIP_H | FLIP_V | FLIP_D) >>> 0;
 
-// Player object.  You can customise the sprite via spriteSrc; the image
-// will be loaded at startup.  The `CHARACTER_SCALE` constant allows
-// you to enlarge the player sprite.  Set it to 2 or 3 to double or
-// triple the size of the character.  Both the on‑screen size and
-// collision box will scale accordingly.
-const CHARACTER_SCALE =3; // Adjust to 2 or 3 for a larger character
+// Character size, speed and sprite
+const CHARACTER_SCALE = 3; // set to 2 or 3 to make the character bigger
+const PLAYER_W = 16 * CHARACTER_SCALE;
+const PLAYER_H = 16 * CHARACTER_SCALE;
+const SPEED    = 100; // pixels per second
+
+// Player state
 const player = {
-  x: 0,
-  y: 0,
-  // The base sprite frame size in pixels.  Tiled maps typically use
-  // 16×16 tiles; these values are multiplied by CHARACTER_SCALE below.
-  w: 16 * CHARACTER_SCALE,
-  h: 16 * CHARACTER_SCALE,
-  speed: 120,
+  x: 0, y: 0, w: PLAYER_W, h: PLAYER_H,
+  vx: 0, vy: 0,
+  spawnId: null,
+  facing: "down",
   sprite: new Image(),
-  spriteSrc: "assets/characters/F_01.png",
-  spawnId: "toHouse"
+  spriteSrc: "./assets/characters/me.png",
 };
 
-// Globals to track the current map and extracted metadata.
-let currentMap   = null;
+// Current map and tileset images
+let currentMap = null;
 let tilesetImages = [];
-let solidRects    = [];
-let portals       = [];
-let spawns        = {};
+
+// Collision rectangles, portals, and spawns
+let solidRects = [];
+let portals    = [];
+let spawns     = Object.create(null);
 
 // Keyboard state
 const keys = Object.create(null);
@@ -94,7 +95,10 @@ function dirname(path) {
   return idx >= 0 ? path.slice(0, idx + 1) : "";
 }
 function join(base, rel) {
-  if (/^(https?:)?\//.test(rel)) return rel; // absolute path
+  // Treat absolute URLs and project-rooted paths as already resolved.
+  if (/^(https?:)?\//.test(rel)) return rel; // absolute or protocol-relative
+  // If the relative path already starts with our maps root, don't double-prefix.
+  if (rel.startsWith('maps/')) return rel;
   return base + rel;
 }
 
@@ -111,17 +115,24 @@ window.addEventListener("keyup", (e) => {
   keys[k] = false;
 });
 
-// Test whether a key is currently down
-function isDown(k) {
-  return !!keys[k];
-}
-
 /* =========================
    STEP 1 — Map loading
    ========================= */
-// Load a Tiled JSON map from a given path.  This resets global state,
-// loads all referenced tileset images and extracts collision, portal and
-// spawn objects.
+// Convert a Tiled properties array into a simple object.
+function toPropMap(props) {
+  const out = Object.create(null);
+  if (!props) return out;
+  for (const p of props) out[p.name] = p.value;
+  return out;
+}
+
+// Resize the canvas to fit the current map in pixels.
+function resizeCanvasToMap(map) {
+  canvas.width  = map.width  * map.tilewidth;
+  canvas.height = map.height * map.tileheight;
+}
+
+// Load a Tiled map and all of its tileset images.
 async function loadMap(jsonPath) {
   const res = await fetch(jsonPath);
   if (!res.ok) throw new Error(`Failed to load map: ${jsonPath}`);
@@ -138,13 +149,9 @@ async function loadMap(jsonPath) {
   portals       = [];
   spawns        = {};
 
-  // Adjust canvas to the map size.  Use tilewidth/height from the map
-  // instead of a global constant because different maps may have
-  // different tile sizes.
-  canvas.width  = map.width  * map.tilewidth;
-  canvas.height = map.height * map.tileheight;
+  resizeCanvasToMap(map);
 
-  // --- Load tilesets
+  // --- Load and decode all tileset images
   for (const ts of map.tilesets) {
     const img = new Image();
     img.src = join(base, ts.image);
@@ -160,12 +167,30 @@ async function loadMap(jsonPath) {
     });
   }
 
+  // --- Preload images for Image Layers so they can be drawn later
+  for (const layer of map.layers) {
+    if (layer.type === "imagelayer" && layer.image) {
+      try {
+        const img = new Image();
+        img.src = join(base, layer.image);
+        await img.decode();
+        // attach decoded image on the layer object for rendering
+        layer._img = img;
+      } catch (e) {
+        console.warn("Failed to load image layer:", layer.name, layer.image, e);
+      }
+    }
+  }
+
   // --- Extract objects from the object layers
   for (const layer of map.layers) {
     if (layer.type !== "objectgroup") continue;
+
     if (layer.name === "Collision") {
       for (const o of layer.objects) {
-        solidRects.push({ x: o.x, y: o.y, w: o.width, h: o.height });
+        solidRects.push({
+          x: o.x, y: o.y, w: o.width, h: o.height,
+        });
       }
     }
     if (layer.name === "Portals") {
@@ -174,19 +199,19 @@ async function loadMap(jsonPath) {
         portals.push({
           x: o.x, y: o.y, w: o.width, h: o.height,
           auto: !!P.auto,
-          prompt: P.prompt || "E: Enter",
-          targetMap: P.targetMap,
-          targetSpawn: P.targetSpawn,
+          prompt: P.prompt || "E: Use",
+          targetMap: P.targetMap || P.map || "",
+          targetSpawn: P.targetSpawn || P.spawn || "",
         });
       }
     }
     if (layer.name === "Spawns") {
       for (const o of layer.objects) {
         // Determine a unique spawn identifier.  Tiled assigns each
-        // object a built‑in numeric `id` and a `name` property.  Users
+        // object a built-in numeric `id` and a `name` property.  Users
         // can also set a custom property named `id` on the object.  We
         // prefer the custom property, then the object name, then fall
-        // back to the built‑in numeric id.  Without this, spawns may
+        // back to the built-in numeric id.  Without this, spawns may
         // be ignored if the map author did not attach a custom
         // property called "id" to the spawn.
         const P = toPropMap(o.properties);
@@ -208,35 +233,38 @@ async function loadMap(jsonPath) {
   if (player.spawnId && spawns[player.spawnId]) {
     const s = spawns[player.spawnId];
     // Align the player so that its feet stand on the spawn point and
-    // it's centred horizontally.  Tiled encodes point objects such that
-    // the coordinate refers to the bottom of the object.  We therefore
-    // subtract the player's height and half its width from the spawn.
-    player.x = s.x - player.w / 2;
-    player.y = s.y - player.h;
-    // Optionally you could set player.facing = s.facing here if
-    // supporting animations for different orientations.
+    // the sprite is centered horizontally over the point.
+    player.x = Math.round(s.x - player.w / 2);
+    player.y = Math.round(s.y - player.h);
+    player.facing = s.facing || "down";
+    player.spawnId = null;
   }
-  // Clear spawnId to avoid reapplying it every frame
-  player.spawnId = null;
-}
 
-// Convert property arrays to dictionaries.  Tiled represents
-// object properties as an array of `{name, value}` pairs; this helper
-// converts it to a more convenient object.
-function toPropMap(props = []) {
-  const out = {};
-  for (const p of props) out[p.name] = p.value;
-  return out;
+  // Load the player's sprite (if not already)
+  if (!player.sprite.src) {
+    player.sprite.src = player.spriteSrc;
+    await player.sprite.decode?.().catch(()=>{});
+  }
 }
 
 /* =========================
    STEP 2 — Map rendering
    ========================= */
-// Draw all visible tile layers.  The gid may include flip flags, so we
+// Draw all visible layers.  The gid may include flip flags, so we
 // mask them off and then compute the correct slice from the tileset.
+// Also draw Image Layers (e.g., an NPC composite layer).
 function drawMap() {
   for (const layer of currentMap.layers) {
-    if (layer.type !== "tilelayer" || layer.visible === false) continue;
+    if (layer.visible === false) continue;
+    if (layer.type === "imagelayer" && layer._img) {
+      ctx.save();
+      if (typeof layer.opacity === "number") ctx.globalAlpha = layer.opacity;
+      const ox = layer.offsetx || 0, oy = layer.offsety || 0;
+      ctx.drawImage(layer._img, Math.round(ox), Math.round(oy));
+      ctx.restore();
+      continue;
+    }
+    if (layer.type !== "tilelayer") continue;
     const data = layer.data;
     for (let i = 0; i < data.length; i++) {
       let gid = data[i] >>> 0;
@@ -267,66 +295,76 @@ function drawMap() {
 }
 
 // Given a global tile id, pick the matching tileset.  Tilesets are
-// sorted by firstgid ascending, so we return the last tileset whose
-// firstgid is <= the gid.
+// sorted by firstgid ascending, so we want the last one whose firstgid
+// is <= gid.
 function pickTilesetFor(gid) {
   let best = null;
   for (const ts of tilesetImages) {
     if (gid >= ts.firstgid) best = ts;
+    else break;
   }
   return best;
 }
 
 /* =========================
-   STEP 3 — Player movement and collision
+   STEP 3 — Movement & collision
    ========================= */
-// Update the player's position based on input, handling collision with
-// solid rectangles.
-function updatePlayer(dt) {
-  let dx = 0, dy = 0;
-  if (isDown("arrowleft") || isDown("a")) dx -= 1;
-  if (isDown("arrowright") || isDown("d")) dx += 1;
-  if (isDown("arrowup") || isDown("w")) dy -= 1;
-  if (isDown("arrowdown") || isDown("s")) dy += 1;
-  // Normalize diagonal movement so speed stays consistent
-  if (dx !== 0 && dy !== 0) {
+// Update the player's velocity based on keyboard state and move them.
+// Then resolve collisions against solid rectangles.  Simple AABB sweep.
+function update(dt) {
+  const speed = SPEED;
+  let vx = 0, vy = 0;
+  if (keys["arrowleft"] || keys["a"])  vx -= speed;
+  if (keys["arrowright"]|| keys["d"])  vx += speed;
+  if (keys["arrowup"]   || keys["w"])  vy -= speed;
+  if (keys["arrowdown"] || keys["s"])  vy += speed;
+
+  // Normalise diagonal speed
+  if (vx && vy) {
     const inv = 1 / Math.sqrt(2);
-    dx *= inv;
-    dy *= inv;
+    vx *= inv; vy *= inv;
   }
-  const stepX = dx * player.speed * dt;
-  const stepY = dy * player.speed * dt;
-  // Move horizontally
-  player.x += stepX;
+
+  player.vx = vx;
+  player.vy = vy;
+
+  // Update facing for sprite selection if needed later
+  if (vx < 0) player.facing = "left";
+  else if (vx > 0) player.facing = "right";
+  else if (vy < 0) player.facing = "up";
+  else if (vy > 0) player.facing = "down";
+
+  // Move on X, then resolve collisions
+  player.x += player.vx * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
-      if (stepX > 0) player.x = r.x - player.w; // push left
-      else if (stepX < 0) player.x = r.x + r.w; // push right
+      if (player.vx > 0) player.x = r.x - player.w;
+      else if (player.vx < 0) player.x = r.x + r.w;
     }
   }
-  // Move vertically
-  player.y += stepY;
+  // Move on Y, then resolve collisions
+  player.y += player.vy * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
-      if (stepY > 0) player.y = r.y - player.h; // push up
-      else if (stepY < 0) player.y = r.y + r.h; // push down
+      if (player.vy > 0) player.y = r.y - player.h;
+      else if (player.vy < 0) player.y = r.y + r.h;
     }
   }
+
+  // Using portals is handled separately to allow an "E to use" prompt.
 }
 
-// AABB overlap test
+// Axis-aligned rectangle overlap test
 function overlap(a, b) {
-  return a.x < b.x + b.w && a.x + a.w > b.x &&
-         a.y < b.y + b.h && a.y + a.h > b.y;
+  return !(a.x + a.w <= b.x || b.x + b.w <= a.x ||
+           a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
 
 /* =========================
-   STEP 4 — Portal mechanics
+   STEP 4 — Portals & spawns
    ========================= */
-// Check whether the player overlaps any portals.  If so, and the portal
-// is auto or the player pressed E, load the target map and set the
-// player's spawnId.  The target map path is resolved relative to the
-// current map's folder.
+// Check if player overlaps a portal and, if so, either auto-use it
+// or require the player to press E (wantUse).
 async function tryUsePortals() {
   const base = dirname(currentMap._jsonPath || "");
   for (const p of portals) {
@@ -342,7 +380,7 @@ async function tryUsePortals() {
 }
 
 /* =========================
-   STEP 5 — Drawing the player
+   STEP 5 — Drawing sprites
    ========================= */
 // Draw the player's sprite at its current position.  We assume the
 // sprite sheet's top-left frame is the idle image; you can extend this
@@ -357,46 +395,48 @@ function drawPlayer() {
   );
 }
 
-/* =========================
-   STEP 6 — Loading overlay
-   ========================= */
-// Grab the loading element from the DOM.  showLoading() and
-// hideLoading() toggle its visibility.  If an error occurs during
-// startup we write the message into this element.
+/* ===============
+   STEP 6 — UI
+   =============== */
 const loadingEl = document.getElementById("loading");
-function hideLoading() {
-  if (loadingEl) loadingEl.style.display = "none";
+function showLoading(text = "Loading…") {
+  if (!loadingEl) return;
+  loadingEl.style.display = "block";
+  loadingEl.textContent = text;
 }
-function showLoading() {
-  if (loadingEl) loadingEl.style.display = "block";
+function hideLoading() {
+  if (!loadingEl) return;
+  loadingEl.style.display = "none";
 }
 
 /* =========================
-   STEP 7 — Main loop
+   STEP 7 — Game loop
    ========================= */
-function loop(ts) {
-  const dt = Math.min(0.032, (ts - lastTime) / 1000);
-  lastTime = ts;
-  if (currentMap) updatePlayer(dt);
-  tryUsePortals().finally(() => { wantUse = false; });
+function loop(t) {
+  const dt = Math.min(0.05, (t - lastTime) / 1000);
+  lastTime = t;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (currentMap) drawMap();
+
+  update(dt);
+  drawMap();
   drawPlayer();
+
+  // Try to use a portal once per frame; wantUse resets after use attempt.
+  tryUsePortals().catch(console.error);
+  wantUse = false;
+
   requestAnimationFrame(loop);
 }
 
 /* =========================
-   STEP 8 — Boot the game
+   STEP 8 — Boot
    ========================= */
-// Initialise the player sprite and first map.  Show the loading
-// overlay while assets are loading.  Catch and display errors.
-(async function start() {
+(async function boot() {
   try {
-    showLoading();
-    // Load the player's sprite
-    await new Promise((resolve, reject) => {
-      player.sprite.onload  = resolve;
-      player.sprite.onerror = () => reject(new Error("Failed to load player sprite: " + player.spriteSrc));
+    showLoading("Loading map…");
+    // Load the player sprite once
+    await new Promise((res) => {
+      player.sprite.addEventListener("load", res, { once: true });
       player.sprite.src = player.spriteSrc;
     });
     // Choose a starting spawn and map.  You can adjust spawnId and
