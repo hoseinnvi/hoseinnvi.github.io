@@ -58,7 +58,7 @@ const GID_MASK = 0x1fffffff;
 // you to enlarge the player sprite.  Set it to 2 or 3 to double or
 // triple the size of the character.  Both the on‑screen size and
 // collision box will scale accordingly.
-const CHARACTER_SCALE = 1; // Adjust to 2 or 3 for a larger character
+const CHARACTER_SCALE =3; // Adjust to 2 or 3 for a larger character
 const player = {
   x: 0,
   y: 0,
