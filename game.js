@@ -7,15 +7,16 @@
    character sprite sheet.  The improvements include:
 
    • Robust sprite loading: the player's sprite source is configurable and
-     defaults to ``F_01.png`` (three columns by four rows).  The boot
+     defaults to ``F_01.png`` (four columns by three rows).  The boot
      sequence waits for the image to load but will time out after a few
      seconds rather than hang forever if the image is missing.  If your
      sprite uses a different filename (e.g. ``F-01.png``), update
      ``PLAYER_SPRITE_SRC`` accordingly.
 
-   • Full animation support: the player cycles through three frames when
-     walking in any of the four directions.  The idle frame is the middle
-     frame of each row.  A "run" mode can be toggled by holding the
+   • Full animation support: the player cycles through three frames (in
+     each direction) when walking.  The idle frame is the middle frame
+     of the vertical sequence for the current direction.  A "run" mode
+     can be toggled by holding the
      ``Shift`` key; running speeds up the character and the animation.
 
    • Improved facing logic: diagonal movement chooses the dominant axis
@@ -47,11 +48,19 @@ const GID_MASK = ~(FLIP_H | FLIP_V | FLIP_D) >>> 0;
 
 // Character sprite configuration.  Adjust ``FRAME_W`` and ``FRAME_H`` to
 // match the width/height of a single cell in your sprite sheet.  The
-// default of 16×16 corresponds to a 3×4 sprite sheet like F_01.png.
+// default of 16×16 corresponds to a 4×3 sprite sheet like F_01.png
+// (four columns for four directions, three rows for animation frames).
 const FRAME_W = 16;
 const FRAME_H = 16;
-const SPRITE_COLUMNS = 3;
-const SPRITE_ROWS    = 4;
+// ``SPRITE_COLUMNS`` is the number of columns in the sprite sheet (one per
+// direction); ``SPRITE_ROWS`` is the number of rows (the number of frames
+// in each direction).  For F_01.png there are 4 columns (down, right,
+// up, left) and 3 rows (animation frames).
+// Number of columns (directions) and rows (frames) in the sprite sheet.
+// These are initial defaults; they will be updated dynamically once the
+// player's sprite image has loaded.  See ``setSpriteDimensions()``.
+let SPRITE_COLUMNS = 4;
+let SPRITE_ROWS    = 3;
 
 // Scaling the player up for easier visibility.  Set to 1 for no scaling
 // or 2/3 to make the character larger relative to the map.
@@ -80,6 +89,19 @@ const player = {
   // (``F-01.png``), update this string accordingly.
   spriteSrc: "./assets/characters/F_01.png",
 };
+
+/*
+ * Determine the number of columns and rows in the player's sprite sheet
+ * based on the natural dimensions of the loaded image.  This function
+ * should be called after the sprite has been decoded or loaded.  It
+ * updates the global ``SPRITE_COLUMNS`` and ``SPRITE_ROWS`` variables.
+ */
+function setSpriteDimensions() {
+  if (player.sprite && player.sprite.naturalWidth && player.sprite.naturalHeight) {
+    SPRITE_COLUMNS = Math.max(1, Math.floor(player.sprite.naturalWidth / FRAME_W));
+    SPRITE_ROWS    = Math.max(1, Math.floor(player.sprite.naturalHeight / FRAME_H));
+  }
+}
 
 // Current map and tileset images
 let currentMap = null;
@@ -236,9 +258,12 @@ async function loadMap(jsonPath) {
     player.sprite.src = player.spriteSrc;
     try {
       await player.sprite.decode?.();
+      // After decoding, update sprite sheet dimensions
+      setSpriteDimensions();
     } catch (e) {
       // If decode fails, log a warning but continue.  The sprite may still
-      // load asynchronously via the 'load' event (below).
+      // load asynchronously via the 'load' event (below).  We attempt to
+      // determine the sheet dimensions once it does load.
       console.warn(`Failed to decode player sprite ${player.spriteSrc}:`, e);
     }
   }
@@ -435,30 +460,37 @@ async function tryUsePortals() {
 }
 
 /* STEP 5 — Drawing the player sprite */
-// Row index for each facing direction
-function rowForFacing(facing) {
+// Column index for each facing direction.  Columns correspond to the
+// directions in the order: down (0), right (1), up (2), left (3).
+function colForFacing(facing) {
   switch (facing) {
     case "down":  return 0;
-    case "left":  return 1;
-    case "right": return 2;
-    case "up":    return 3;
+    case "right": return 1;
+    case "up":    return 2;
+    case "left":  return 3;
     default:       return 0;
   }
 }
 
-function currentAnimCol() {
-  // Use the middle frame when idle
-  if (!(player.vx || player.vy)) return 1;
+// Compute the current animation row (frame) index.  If the player is
+// idle, return the middle frame (row 1) for a neutral pose.  When
+// moving, cycle through the number of available rows (``SPRITE_ROWS``)
+// according to the configured FPS.
+function currentAnimRow() {
+  if (!(player.vx || player.vy)) {
+    // Use the middle frame as idle pose (row index 1 for 3 rows)
+    return Math.floor(SPRITE_ROWS / 2);
+  }
   const isRunning = !!(keys["shift"] || keys["shiftleft"] || keys["shiftright"]);
   const fps = isRunning ? RUN_ANIM_FPS : WALK_ANIM_FPS;
-  return Math.floor(animTime * fps) % SPRITE_COLUMNS;
+  return Math.floor(animTime * fps) % SPRITE_ROWS;
 }
 
 function drawPlayer() {
-  const col = currentAnimCol();
-  const row = rowForFacing(player.facing);
-  const sx = col * FRAME_W;
-  const sy = row * FRAME_H;
+  const frameRow = currentAnimRow();
+  const dirCol   = colForFacing(player.facing);
+  const sx = dirCol * FRAME_W;
+  const sy = frameRow * FRAME_H;
   ctx.drawImage(
     player.sprite,
     sx, sy, FRAME_W, FRAME_H,
@@ -508,6 +540,8 @@ function loop(t) {
       }, 3000);
       player.sprite.addEventListener("load", () => {
         clearTimeout(timer);
+        // Once loaded, update the sprite sheet dimensions
+        setSpriteDimensions();
         res();
       }, { once: true });
       player.sprite.src = player.spriteSrc;
