@@ -251,7 +251,7 @@
   <object id="1" x="607" y="-6" width="112" height="48">
    <text fontfamily="Sans Serif Collection" wrap="1" color="#ffffff" halign="center" valign="center">Game Mentor</text>
   </object>
-  <object id="16" x="192" y="6" width="112" height="19">
+  <object id="16" x="192" y="8" width="112" height="19">
    <text wrap="1" color="#ffffff">Ask Anything</text>
   </object>
  </objectgroup>
