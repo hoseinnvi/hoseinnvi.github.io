@@ -112,35 +112,24 @@ let solidRects = [];
 let portals    = [];
 let spawns     = Object.create(null);
 
-// Hotspots for interactive book UI
+// === Book UI Configuration & Hotspots ===
+// A horizontally or vertically arranged sprite sheet representing the book animation.
+// The sheet will be automatically divided into frames when the image loads.
 let hotspots = [];
-
-// Book UI configuration and state
 const book = {
   img: new Image(),
-  // Path to the exported sprite sheet for the book (horizontal strip)
-  src: "./UI/book_open.png",
-  // Dimensions of one frame of the book sprite sheet
-  frameW: 256,
-  frameH: 256,
-  // Total number of frames in the strip (opening/closing animation length)
-  frameCount: 12,
-  // Frames per second for the opening/closing animation
+  src: "./UI/book_open.png", // path to your exported book sprite sheet
+  frameW: 0,
+  frameH: 0,
+  frameCount: 0,
   fps: 12,
-  // Position on screen; will be centered when the map is loaded
   x: 0,
   y: 0,
-  // Current animation state: "closed", "opening", "open", "closing"
-  state: "closed",
-  // Current frame index within the sprite sheet
+  state: "closed", // "closed" | "opening" | "open" | "closing"
   frame: 0,
-  // Accumulator for animation timing
   acc: 0,
-  // Current page index when the book is open
   pageIndex: 0,
-  // Which hotspot triggered the book (used to look up pages)
   currentKey: null,
-  // Map of pages for each hotspot identifier
   pagesById: {
     cs:   ["Computer Vision", "Stereo, TSDF fusion", "3D surface rec.", "Ultrasound + vision"],
     cv:   ["Computer Vision", "Stereo, TSDF fusion", "3D surface rec.", "Ultrasound + vision"],
@@ -148,11 +137,42 @@ const book = {
     agent:["Agentic AI", "Multi-tool flows", "MCP/Functions", "Reliability patterns"],
     rl:   ["Reinforcement Learning", "Policy/value", "Env design", "Eval loops"]
   },
-  // Cached copy of the current pages; filled when opening the book
-  _pagesCached: null
+  _pagesCached: null,
+  flipProgress: 0,
+  lastPageIndex: 0
 };
-// Assign the image source; this will start loading the sprite sheet
 book.img.src = book.src;
+
+// Once the book image loads, calculate frame dimensions and count automatically.
+function adjustBookFrameSize() {
+  const w = book.img.naturalWidth;
+  const h = book.img.naturalHeight;
+  if (!w || !h) return;
+  // Determine whether frames are arranged horizontally or vertically.
+  let fc = Math.round(w / h);
+  let horizontal = Math.abs(fc * h - w) < 1;
+  if (horizontal && fc > 1) {
+    book.frameCount = fc;
+    book.frameW = w / fc;
+    book.frameH = h;
+  } else {
+    fc = Math.round(h / w);
+    if (Math.abs(fc * w - h) < 1 && fc > 1) {
+      book.frameCount = fc;
+      book.frameW = w;
+      book.frameH = h / fc;
+    } else {
+      book.frameCount = 1;
+      book.frameW = w;
+      book.frameH = h;
+    }
+  }
+}
+if (book.img.complete) {
+  adjustBookFrameSize();
+} else {
+  book.img.addEventListener("load", adjustBookFrameSize, { once: true });
+}
 
 // Keyboard state
 const keys = Object.create(null);
@@ -184,41 +204,35 @@ window.addEventListener("keyup", (e) => {
   keys[k] = false;
 });
 
-// Listen for Escape to close the book.
+// Escape key closes the book if open or animating
 window.addEventListener("keydown", (e) => {
   if (e.key === "Escape" || e.key === "Esc") {
     if (book.state !== "closed") {
       book.state = "closing";
       book.acc = 0;
-      // Prevent default behaviour such as exiting full-screen.
+      book.flipProgress = 0;
       e.preventDefault();
     }
   }
 });
 
-// Listen for mouse clicks to flip pages when the book is open.
+// Clicking inside the book flips pages with a cross-fade animation
 canvas.addEventListener("mousedown", (e) => {
   if (book.state !== "open") return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  // Ignore clicks outside the book.
-  if (
-    mx < book.x ||
-    mx > book.x + book.frameW ||
-    my < book.y ||
-    my > book.y + book.frameH
-  ) {
-    return;
-  }
+  if (mx < book.x || mx > book.x + book.frameW || my < book.y || my > book.y + book.frameH) return;
   const leftSide = mx < book.x + book.frameW / 2;
   const pages = book._pagesCached || [];
   if (!pages.length) return;
+  book.lastPageIndex = book.pageIndex;
   if (leftSide) {
     book.pageIndex = (book.pageIndex - 1 + pages.length) % pages.length;
   } else {
     book.pageIndex = (book.pageIndex + 1) % pages.length;
   }
+  book.flipProgress = 0;
 });
 
 /* STEP 1 — Map loading */
@@ -256,7 +270,7 @@ async function loadMap(jsonPath) {
 
   resizeCanvasToMap(map);
 
-  // Position the book in the center of the canvas when loading a new map.
+  // Center the book on screen whenever a new map loads.
   book.x = Math.round((canvas.width  - book.frameW) / 2);
   book.y = Math.round((canvas.height - book.frameH) / 2);
 
@@ -326,8 +340,7 @@ async function loadMap(jsonPath) {
       }
     }
 
-    // Hotspots define areas where the player can open the book.
-    // Each hotspot should have a unique id (e.g. "cv", "nlp", "agent", "rl").
+    // Parse Hotspots layer to allow interaction with the book
     if (layer.name === "Hotspots") {
       hotspots = [];
       for (const o of layer.objects) {
@@ -584,8 +597,7 @@ async function tryUsePortals() {
   }
 }
 
-/* STEP 4.5 — Hotspots & interactive book */
-// Check if the player is within range of a hotspot and pressing the use key.
+/* === Hotspot interaction & book animation === */
 function near(a, b, r) {
   const dx = (a.x + a.w / 2) - b.x;
   const dy = (a.y + a.h / 2) - b.y;
@@ -593,23 +605,22 @@ function near(a, b, r) {
 }
 
 function openBookFor(idLower) {
-  // Normalise key and look up pages.
   const key = idLower.toLowerCase();
   const pages =
-    book.pagesById[key] || book.pagesById[(key === "cv" ? "cs" : "cs")];
+    book.pagesById[key] ||
+    book.pagesById[(key === "cv" ? "cs" : "cs")];
   book.currentKey = key;
   book.pageIndex = 0;
-  book.state = "opening";
   book.frame = 0;
   book.acc = 0;
+  book.state = "opening";
   book._pagesCached = pages;
+  book.flipProgress = 0;
 }
 
 function tryUseHotspots() {
-  // Only trigger when the 'use' key has been pressed.
   if (!wantUse) return;
   wantUse = false;
-  // List of recognised hotspot identifiers.
   const valid = new Set(["cv", "cs", "nlp", "agent", "rl"]);
   for (const h of hotspots) {
     if (!h.active) continue;
@@ -643,66 +654,86 @@ function updateBook(dt) {
       }
     }
   }
+  // Update page flip cross-fade
+  if (book.state === "open" && book.flipProgress < 1) {
+    book.flipProgress += dt * 6;
+    if (book.flipProgress > 1) book.flipProgress = 1;
+  }
 }
 
 function drawBook() {
   if (book.state === "closed") return;
-  // Darken the screen behind the book.
+  // Darken background behind book
   ctx.save();
   ctx.fillStyle = "rgba(0,0,0,0.5)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.restore();
-  // Draw the current frame of the book.
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(
-    book.img,
-    book.frame * book.frameW,
-    0,
-    book.frameW,
-    book.frameH,
-    book.x,
-    book.y,
-    book.frameW,
-    book.frameH
-  );
-  // If the book is open, draw the page text.
-  if (book.state === "open" && book._pagesCached) {
-    const pages = book._pagesCached;
-    const text = pages[book.pageIndex] || "";
-    // Position the text inside the page.  Adjust these values to align with your artwork.
-    const box = {
-      x: book.x + 70,
-      y: book.y + 60,
-      w: book.frameW - 140,
-      line: 18,
-      max: 10,
-    };
-    ctx.fillStyle = "#2b261a";
-    ctx.font = "16px monospace";
-    ctx.textBaseline = "top";
-    let y = box.y;
-    // Simple word wrap
-    const words = String(text).split(/\s+/);
-    let line = "";
-    for (const word of words) {
-      const test = line ? line + " " + word : word;
-      if (ctx.measureText(test).width > box.w && line) {
-        ctx.fillText(line, box.x, y);
-        line = word;
-        y += box.line;
-      } else {
-        line = test;
-      }
-    }
-    if (line) ctx.fillText(line, box.x, y);
-    // Draw hint for page navigation and closing.
-    ctx.fillStyle = "rgba(255,255,255,0.75)";
-    ctx.font = "14px monospace";
-    ctx.fillText(
-      "← click left • click right →    (Esc closes)",
-      box.x,
-      book.y + book.frameH - 24
+  // Draw the book image frame
+  if (book.frameCount > 0) {
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(
+      book.img,
+      book.frame * book.frameW,
+      0,
+      book.frameW,
+      book.frameH,
+      book.x,
+      book.y,
+      book.frameW,
+      book.frameH
     );
+  }
+  // Draw page text if open or flipping
+  if (book.state === "open" || (book.state === "open" && book.flipProgress < 1)) {
+    const pages = book._pagesCached || [];
+    if (pages.length) {
+      // Define text box relative to frame size
+      const marginX = book.frameW * 0.2;
+      const marginY = book.frameH * 0.2;
+      const box = {
+        x: book.x + marginX,
+        y: book.y + marginY,
+        w: book.frameW - marginX * 2,
+        line: Math.max(12, book.frameH * 0.05),
+        max: 20
+      };
+      function renderPageText(idx, alpha) {
+        const text = pages[idx] || "";
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "#2b261a";
+        ctx.font = `${Math.floor(box.line * 0.9)}px monospace`;
+        ctx.textBaseline = "top";
+        let y = box.y;
+        const words = String(text).split(/\s+/);
+        let line = "";
+        for (const word of words) {
+          const test = line ? line + " " + word : word;
+          if (ctx.measureText(test).width > box.w && line) {
+            ctx.fillText(line, box.x, y);
+            line = word;
+            y += box.line;
+          } else {
+            line = test;
+          }
+        }
+        if (line) ctx.fillText(line, box.x, y);
+        ctx.restore();
+      }
+      if (book.flipProgress < 1 && book.lastPageIndex !== book.pageIndex) {
+        renderPageText(book.lastPageIndex, 1 - book.flipProgress);
+        renderPageText(book.pageIndex, book.flipProgress);
+      } else {
+        renderPageText(book.pageIndex, 1);
+      }
+      ctx.fillStyle = "rgba(255,255,255,0.7)";
+      ctx.font = `${Math.floor(box.line * 0.7)}px monospace`;
+      ctx.fillText(
+        "← click left • click right →    (Esc closes)",
+        box.x,
+        book.y + book.frameH - box.line
+      );
+    }
   }
 }
 
@@ -766,16 +797,15 @@ function loop(t) {
   update(dt);
   drawMap();
   drawPlayer();
-  // Process automatic or interactive portals
   tryUsePortals().catch((err) => {
     console.error(err);
     if (loadingEl) loadingEl.textContent = "Error: " + err.message;
   });
-  // Allow the player to interact with hotspots to open the book.
+  // Handle hotspot interactions for opening the book
   tryUseHotspots();
-  // Advance book animation state.
+  // Update book animation state and page flip transitions
   updateBook(dt);
-  // Draw the book UI overlay on top of everything else.
+  // Draw the book UI overlay on top of everything else
   drawBook();
   wantUse = false;
   requestAnimationFrame(loop);
