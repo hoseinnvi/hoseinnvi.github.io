@@ -111,68 +111,85 @@ let tilesetImages = [];
 let solidRects = [];
 let portals    = [];
 let spawns     = Object.create(null);
+// Hotspot objects for interactive elements that open the book UI.
+let hotspots = [];
 
-// -----------------------------------------------------------------------------
-// Hotspots and book UI configuration
-//
-// ``hotspots`` will be populated when a map is loaded.  Each hotspot
-// corresponds to an interactive bookshelf or object in the environment.
-let hotspots  = [];
+// --------------------------------------------------------------------
+// Book UI configuration and state
+// The game supports a pop-up "book" overlay that animates open and closed,
+// displays topic-specific text, and allows the player to flip between pages.
+// By default, a single sprite sheet is used for all topics.  Each frame in
+// the sheet is square (height equals width) and the frames are laid out
+// horizontally.  The final frame shows the fully open book.
+const USE_SINGLE_BOOK_IMAGE = true;
+// Path to the shared book sprite sheet.  You can replace this with your
+// own artwork; the sheet should contain a sequence of frames from closed
+// to fully open.  Each frame must be square and arranged in a single row.
+const SINGLE_BOOK_IMAGE_SRC = "./UI/book_open.png";
 
-// Define the page contents for each book.  Each entry in the array is a
-// separate page of text.  You can customise these strings to suit the
-// information you want to convey when a book is opened.
-const pagesByBookId = {
-  cs:   [
-    "Computer Vision",
-    "Stereo, TSDF fusion",
-    "3D surface reconstruction",
-    "Ultrasound + vision"
-  ],
-  nlp:  [
-    "NLP & LLMs",
-    "Retrieval-augmented generation",
-    "Agentic flows & evaluation",
-    "Safety & production pipelines"
-  ],
-  agent: [
-    "Agentic AI",
-    "Multi‑tool flows",
-    "MCP/Functions",
-    "Reliability patterns"
-  ],
-  rl:   [
-    "Reinforcement Learning",
-    "Policy/value learning",
-    "Environment design",
-    "Evaluation loops"
-  ],
-  me:   [
-    "About Me",
-    "This is some information about me.",
-    "Feel free to customise this section."
-  ]
+// Book state object.  When the player interacts with certain hotspots,
+// the book animates open and displays text relevant to that hotspot.
+const book = {
+  img: new Image(),
+  frameW: 0,
+  frameH: 0,
+  frameCount: 1,
+  idleOpenFrame: 0,
+  fps: 12,                // Animation speed for open/close (frames per second)
+  x: 0,                   // Screen position (set after image loads)
+  y: 0,
+  state: "closed",        // "closed" | "opening" | "open" | "flipping" | "closing"
+  frame: 0,               // Current frame index in the sprite sheet
+  acc: 0,                 // Accumulated time for frame timing
+  pageIndex: 0,           // Current page index within the selected topic
+  lastPageIndex: 0,       // Previous page index (for flip animation)
+  nextPageIndex: 0,       // Destination page index during flip animation
+  currentKey: null,       // ID of the hotspot that opened the book
+  flipProgress: 0,        // 0..1 progress during page-flip animation
+  // Text content per topic.  Modify these arrays to customise what each
+  // hotspot displays when the book is open.  Each array entry represents
+  // a single page.
+  pagesById: {
+    cs:   ["Computer Vision", "Stereo and TSDF fusion", "3D surface reconstruction", "Ultrasound + vision"],
+    cv:   ["Computer Vision", "Stereo and TSDF fusion", "3D surface reconstruction", "Ultrasound + vision"],
+    nlp:  ["NLP & LLMs", "Retrieval Augmented Generation (RAG)", "Agents and tools", "Evaluation & safety", "Production pipelines"],
+    agent:["Agentic AI", "Multi‑tool flows", "MCP/Functions", "Reliability patterns"],
+    rl:   ["Reinforcement Learning", "Policy/value methods", "Environment design", "Evaluation loops"],
+    me:   ["About Me", "This page is intentionally left blank."],
+  },
+  _pagesCached: null      // Internal cache of the selected topic's pages
 };
 
-// Map of book sprite sheet paths per hotspot id.  When you export a
-// horizontal or vertical strip of frames from LibreSprite/Aseprite, place the
-// resulting PNG files into the ``UI`` directory and update these paths.  If a
-// particular id is missing from this object, the system will fall back to
-// using the ``cs`` book image.
-const bookImagePaths = {
-  cs:    "./UI/cs_book.png",
-  cv:    "./UI/cs_book.png", // alias for Computer Vision
-  nlp:   "./UI/nlp_book.png",
-  agent: "./UI/agent_book.png",
-  rl:    "./UI/rl_book.png",
-  me:    "./UI/me_book.png"
-};
+/**
+ * Compute the frame dimensions and count for the book sprite sheet.  The
+ * frames are assumed to be square and arranged horizontally.  The last
+ * frame (index ``idleOpenFrame``) represents the fully open book.
+ */
+function adjustBookFrameSize() {
+  const img = book.img;
+  if (!img || !img.naturalWidth || !img.naturalHeight) return;
+  // Each frame is a square: height and width are equal to the image height.
+  book.frameH = img.naturalHeight;
+  book.frameW = book.frameH;
+  book.frameCount = Math.max(1, Math.floor(img.naturalWidth / book.frameW));
+  // The last frame depicts the fully open book.
+  book.idleOpenFrame = Math.max(0, book.frameCount - 1);
+  // Centre the book on the canvas if the canvas dimensions are known.
+  if (canvas && canvas.width && canvas.height) {
+    book.x = Math.round((canvas.width  - book.frameW) / 2);
+    book.y = Math.round((canvas.height - book.frameH) / 2);
+  }
+}
 
-// Storage for book objects keyed by id.  Each book holds its own image,
-// animation state and pages.  ``currentBook`` points to the book that is
-// presently open (if any).
-const books = {};
-let currentBook = null;
+// Load the shared book image and calculate frame metrics.  The image
+// decoding happens asynchronously, and ``adjustBookFrameSize`` will run
+// when the image has loaded.  If the image is already cached, the
+// dimensions are computed immediately.
+book.img.onload = adjustBookFrameSize;
+book.img.src = SINGLE_BOOK_IMAGE_SRC;
+if (book.img.complete) {
+  adjustBookFrameSize();
+}
 
 // Keyboard state
 const keys = Object.create(null);
@@ -204,43 +221,44 @@ window.addEventListener("keyup", (e) => {
   keys[k] = false;
 });
 
-// Additional key handler to close an open book when the Escape key is
-// pressed.  If a book is currently open or animating, pressing Escape
-// triggers the closing animation.  The event is consumed to prevent it
-// interfering with other UI behaviour.
+// Additional input handlers for the book UI.  Pressing the Escape key will
+// close the book (if open), and clicking on the left or right half of
+// the book while it is open flips to the previous or next page.
 window.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" || e.key === "Esc") {
-    if (currentBook && currentBook.state !== "closed") {
-      currentBook.state = "closing";
-      currentBook.acc = 0;
-      e.preventDefault();
-    }
+  // Only handle Escape if the book UI is active; let other keys through.
+  if (e.key === "Escape" && book.state !== "closed") {
+    // Start closing the book regardless of whether it is fully open.
+    book.state = "closing";
+    book.acc = 0;
+    e.preventDefault();
   }
 });
-
-// Mouse handler for page navigation.  While a book is open, clicking on
-// the left or right half of the book will change pages.  The target page
-// index wraps around the number of pages for that book.  A flip animation
-// (simple cross‑fade) is initiated when the page index changes.
 canvas.addEventListener("mousedown", (e) => {
-  const book = currentBook;
-  if (!book || book.state !== "open") return;
+  // Ignore clicks when the book is not fully open.
+  if (book.state !== "open") return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  // Ensure the click occurs within the bounds of the book
-  if (mx < book.x || mx > book.x + book.frameW || my < book.y || my > book.y + book.frameH) return;
-  const pages = book.pages || [];
-  if (!pages.length) return;
-  const leftSide = mx - book.x < book.frameW / 2;
-  if (leftSide) {
-    book.targetPage = (book.pageIndex - 1 + pages.length) % pages.length;
+  // Check if the click falls within the book's bounding box.
+  if (mx < book.x || mx > book.x + book.frameW ||
+      my < book.y || my > book.y + book.frameH) return;
+  // Flip pages based on whether the click was on the left or right side.
+  const total = book._pagesCached ? book._pagesCached.length : 0;
+  if (!total) return;
+  // Determine page change direction
+  let newIndex;
+  if (mx < book.x + book.frameW / 2) {
+    // Left side: previous page (wrap around)
+    newIndex = (book.pageIndex - 1 + total) % total;
   } else {
-    book.targetPage = (book.pageIndex + 1) % pages.length;
+    // Right side: next page
+    newIndex = (book.pageIndex + 1) % total;
   }
-  if (book.targetPage !== book.pageIndex) {
-    book.flipProgress = 0;
-  }
+  // Setup flip animation
+  book.lastPageIndex = book.pageIndex;
+  book.nextPageIndex = newIndex;
+  book.flipProgress = 0;
+  book.state = "flipping";
 });
 
 /* STEP 1 — Map loading */
@@ -275,8 +293,20 @@ async function loadMap(jsonPath) {
   solidRects    = [];
   portals       = [];
   spawns        = {};
+  // Reset hotspots when loading a new map.  The Hotspots layer may be
+  // defined per map and contains interactive trigger zones.
+  hotspots      = [];
 
   resizeCanvasToMap(map);
+
+  // Recalculate book position when the canvas size changes.  The book
+  // sprite sheet may not have loaded yet, so ``frameW`` and ``frameH``
+  // might still be zero.  This will be updated again once the image
+  // finishes loading.
+  if (book.frameW && book.frameH) {
+    book.x = Math.round((canvas.width  - book.frameW) / 2);
+    book.y = Math.round((canvas.height - book.frameH) / 2);
+  }
 
   // Load tilesets
   for (const ts of map.tilesets) {
@@ -343,20 +373,22 @@ async function loadMap(jsonPath) {
         };
       }
     }
-
-    // Capture hotspots for interactive bookcases and other points of interest.
+    // Parse interactive hotspots from the "Hotspots" object layer.  Each
+    // object defines an area (by x/y) where the player can press E to
+    // open the book.  A ``radius`` property can override the default
+    // trigger radius (12 pixels).  The ``id`` property determines which
+    // content is shown.
     if (layer.name === "Hotspots") {
-      hotspots = [];
       for (const o of layer.objects) {
         const P = toPropMap(o.properties);
-        const hid = (P.id || o.name || String(o.id)).toLowerCase();
+        const id = (P.id || o.name || String(o.id) || "").toLowerCase();
         hotspots.push({
-          id: hid,
+          id,
           x: o.x,
           y: o.y,
-          r: P.radius || P.R || 10,
-          active: P.active !== false,
+          r: P.radius || 12,
           title: P.title || "",
+          active: P.active !== false
         });
       }
     }
@@ -587,6 +619,218 @@ function overlap(a, b) {
            a.y + a.h <= b.y || b.y + b.h <= a.y);
 }
 
+/* -----------------------------------------------------------------------
+ * Book UI helper functions
+ *
+ * The following functions implement the behaviour of the interactive book
+ * overlay.  The book can be opened by pressing E near a hotspot (see
+ * ``tryUseHotspots``).  When open, the book animates via frames in the
+ * sprite sheet.  The player can flip pages by clicking on the left or
+ * right side of the book, and press Escape to close it.
+ */
+
+/**
+ * Return true if the player's centre is within a circular hotspot.
+ * @param {object} a - Player object with x, y, w, h fields.
+ * @param {object} b - Hotspot with x, y (centre) and r (radius).
+ */
+function near(a, b) {
+  const dx = (a.x + a.w / 2) - b.x;
+  const dy = (a.y + a.h / 2) - b.y;
+  return (dx * dx + dy * dy) <= (b.r * b.r);
+}
+
+/**
+ * Start opening the book for the given hotspot ID.  This sets up the
+ * animation state and loads the appropriate pages for the topic.  If
+ * ``USE_SINGLE_BOOK_IMAGE`` is true, the same sprite sheet is reused
+ * regardless of topic.
+ * @param {string} idLower - Lowercase ID of the hotspot (e.g. "cv", "nlp").
+ */
+function openBookFor(idLower) {
+  const key = idLower.toLowerCase();
+  // If using a single image, ensure the sprite is loaded and sized.
+  if (USE_SINGLE_BOOK_IMAGE) {
+    if (book.img.src !== SINGLE_BOOK_IMAGE_SRC) {
+      book.img.onload = adjustBookFrameSize;
+      book.img.src = SINGLE_BOOK_IMAGE_SRC;
+    }
+  }
+  // Pull pages for this topic; fall back to cs if cv alias is used.
+  const pages =
+    book.pagesById[key] ||
+    book.pagesById[(key === "cv" ? "cs" : "cs")] ||
+    [];
+  book.currentKey    = key;
+  book.pageIndex     = 0;
+  book.lastPageIndex = 0;
+  book.nextPageIndex = 0;
+  book.acc           = 0;
+  book.frame         = 0;
+  book.flipProgress  = 0;
+  book.state         = "opening";
+  book._pagesCached  = pages;
+  // Ensure the book is centred on screen (in case window size changed).
+  if (book.frameW && book.frameH) {
+    book.x = Math.round((canvas.width  - book.frameW) / 2);
+    book.y = Math.round((canvas.height - book.frameH) / 2);
+  }
+}
+
+/**
+ * Check if the player is near any active hotspot and open the book if
+ * the E key was pressed.  After handling, the ``wantUse`` flag is reset.
+ */
+function tryUseHotspots() {
+  if (!wantUse) return;
+  wantUse = false;
+  if (!hotspots || !hotspots.length) return;
+  // Define which IDs are valid triggers; others are ignored.
+  const valid = new Set(["cv", "cs", "nlp", "agent", "rl", "me"]);
+  for (const h of hotspots) {
+    if (!h.active) continue;
+    const id = (h.id || "").toLowerCase();
+    // Accept alias "cv" as "cs" (computer vision).
+    if (!valid.has(id) && !(id === "cv" || id === "cs")) continue;
+    if (near(player, h)) {
+      openBookFor(id);
+      break;
+    }
+  }
+}
+
+/**
+ * Animate the book's open/close and page-flip states.  Should be called
+ * once per frame with the frame's delta time.  When the book is fully
+ * open, it remains in an idle state until closed or pages are flipped.
+ * @param {number} dt - Time elapsed since the last frame, in seconds.
+ */
+function updateBook(dt) {
+  if (book.state === "closed") return;
+  // Opening animation: step through frames until the idle open frame.
+  if (book.state === "opening") {
+    book.acc += dt;
+    const interval = 1 / book.fps;
+    if (book.acc >= interval) {
+      book.acc -= interval;
+      book.frame++;
+      if (book.frame >= book.idleOpenFrame) {
+        book.frame = book.idleOpenFrame;
+        book.state = "open";
+      }
+    }
+    return;
+  }
+  // Closing animation: reverse through frames until fully closed.
+  if (book.state === "closing") {
+    book.acc += dt;
+    const interval = 1 / book.fps;
+    if (book.acc >= interval) {
+      book.acc -= interval;
+      book.frame--;
+      if (book.frame <= 0) {
+        book.frame = 0;
+        book.state = "closed";
+      }
+    }
+    return;
+  }
+  // Flipping animation: cross-fade between pages.
+  if (book.state === "flipping") {
+    // Flip speed: adjust this to make page turns faster or slower.
+    const flipSpeed = 2; // units per second (completes in 0.5s)
+    book.flipProgress += dt * flipSpeed;
+    if (book.flipProgress >= 1) {
+      book.flipProgress = 0;
+      book.pageIndex = book.nextPageIndex;
+      book.state = "open";
+    }
+    return;
+  }
+  // Idle open state: nothing to update.
+}
+
+/**
+ * Draw the book overlay and its contents.  If the book is not open or
+ * animating, this function does nothing.  The underlying map and player
+ * should already have been drawn before calling this function.
+ * @param {CanvasRenderingContext2D} ctx - The drawing context.
+ */
+function drawBook(ctx) {
+  if (book.state === "closed") return;
+  ctx.save();
+  // Dim the world behind the book.
+  ctx.fillStyle = "rgba(0,0,0,0.5)";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  // Draw the current frame of the book sprite.
+  ctx.imageSmoothingEnabled = false;
+  const sx = book.frame * book.frameW;
+  ctx.drawImage(
+    book.img,
+    sx, 0, book.frameW, book.frameH,
+    book.x, book.y,
+    book.frameW, book.frameH
+  );
+  // Draw page text only when the book is open or flipping.
+  if (book.state === "open" || book.state === "flipping") {
+    const pages = book._pagesCached || [];
+    // Determine old and new page indices for cross-fading.
+    const oldIndex = book.pageIndex;
+    const newIndex = (book.state === "flipping") ? book.nextPageIndex : book.pageIndex;
+    // Function to draw a page's text into the open-book area.  The
+    // coordinates and dimensions are computed relative to the book's
+    // current position and frame size.  The text is wrapped within
+    // ``maxW`` pixels horizontally and may extend across multiple rows.
+    function drawPageText(text, alpha) {
+      ctx.globalAlpha = alpha;
+      ctx.fillStyle = "#2b261a";
+      ctx.font = "16px monospace";
+      ctx.textBaseline = "top";
+      // Define a padding around the text and the maximum width.
+      const padX = Math.floor(book.frameW * 0.18);
+      const padY = Math.floor(book.frameH * 0.18);
+      const maxW  = book.frameW - padX * 2;
+      let x0 = book.x + padX;
+      let y0 = book.y + padY;
+      const words = String(text || "").split(/\s+/);
+      let line = "";
+      let y = y0;
+      const lineHeight = 18; // pixels per line
+      for (let i = 0; i < words.length; i++) {
+        const test = line ? line + " " + words[i] : words[i];
+        const w = ctx.measureText(test).width;
+        if (w > maxW && line) {
+          ctx.fillText(line, x0, y);
+          line = words[i];
+          y += lineHeight;
+        } else {
+          line = test;
+        }
+      }
+      if (line) ctx.fillText(line, x0, y);
+      ctx.globalAlpha = 1;
+    }
+    // Draw old and new pages with appropriate transparency when flipping.
+    if (book.state === "flipping") {
+      drawPageText(pages[oldIndex], 1 - book.flipProgress);
+      drawPageText(pages[newIndex], book.flipProgress);
+    } else {
+      drawPageText(pages[oldIndex], 1);
+    }
+    // Draw interaction hint along the bottom of the book.
+    ctx.fillStyle = "rgba(255,255,255,0.75)";
+    ctx.font = "14px monospace";
+    ctx.textBaseline = "bottom";
+    const hint = "← click left • click right →     (Esc closes)";
+    ctx.fillText(
+      hint,
+      book.x + Math.floor(book.frameW * 0.05),
+      book.y + book.frameH - Math.floor(book.frameH * 0.05)
+    );
+  }
+  ctx.restore();
+}
+
 /* STEP 4 — Portals & spawns */
 async function tryUsePortals() {
   const base = dirname(currentMap._jsonPath || "");
@@ -599,291 +843,6 @@ async function tryUsePortals() {
         break;
       }
     }
-  }
-}
-
-/* --------------------------------------------------------------------------
- * Hotspot and book helpers
- *
- * The functions below coordinate the interactive bookshelf hotspots and the
- * book UI.  Each hotspot can trigger a separate book; books are loaded
- * lazily and cached in the ``books`` object.  When a book is opened, it
- * animates from closed to fully open using the frames in its sprite
- * sheet.  Clicking on the left or right side of the open book flips
- * between pages with a simple cross‑fade.  Pressing Escape closes the
- * book.  Multiple books are supported simultaneously, but only one can
- * be open at a time (``currentBook``).
- */
-
-// Compute the greatest common divisor.  Used for inferring sprite sheet
-// frame dimensions when the exact ratio of width to height is unknown.
-function gcd(a, b) {
-  while (b !== 0) {
-    const temp = b;
-    b = a % b;
-    a = temp;
-  }
-  return a;
-}
-
-// Determine orientation and frame sizes for a book's sprite sheet.  Books
-// exported from LibreSprite/Aseprite typically arrange frames either
-// horizontally (all frames in a row) or vertically (in a column).  This
-// function analyses the image dimensions to choose the orientation that
-// yields the largest integer frame count.  It then sets ``frameW``,
-// ``frameH``, ``frameCount``, ``orientation`` and ``openFrame`` on the
-// given book object.
-function adjustBookFrameSize(book) {
-  const img = book.img;
-  const w = img.naturalWidth || 0;
-  const h = img.naturalHeight || 0;
-  if (!w || !h) return;
-  let frameCountH = -1;
-  let frameCountV = -1;
-  // Horizontal: frames laid out left to right
-  if (w % h === 0) {
-    frameCountH = w / h;
-  } else {
-    const g = gcd(w, h);
-    if (g > 0 && w / g > 1) frameCountH = w / g;
-  }
-  // Vertical: frames laid out top to bottom
-  if (h % w === 0) {
-    frameCountV = h / w;
-  } else {
-    const g = gcd(w, h);
-    if (g > 0 && h / g > 1) frameCountV = h / g;
-  }
-  let orientation = "horizontal";
-  let frameCount = 1;
-  if (frameCountH >= frameCountV) {
-    orientation = "horizontal";
-    frameCount = Math.max(1, Math.floor(frameCountH));
-    book.frameW = Math.floor(w / frameCount);
-    book.frameH = h;
-  } else {
-    orientation = "vertical";
-    frameCount = Math.max(1, Math.floor(frameCountV));
-    book.frameW = w;
-    book.frameH = Math.floor(h / frameCount);
-  }
-  book.orientation = orientation;
-  book.frameCount = frameCount;
-  book.openFrame = frameCount - 1;
-}
-
-// Retrieve a book object by id, creating it if it does not yet exist.
-// Each book holds its own image, pages and animation state.  Images are
-// loaded lazily.  If no image is defined for the id, the "cs" image
-// (Computer Vision) is used as a fallback.
-function getOrCreateBook(id) {
-  const key = id.toLowerCase();
-  if (books[key]) return books[key];
-  // Determine pages and image source.  Support alias "cv" to map to "cs".
-  const pages = pagesByBookId[key] || pagesByBookId[key === "cv" ? "cs" : "cs"] || [];
-  const src   = bookImagePaths[key] || bookImagePaths[key === "cv" ? "cs" : "cs"] || "./UI/book_open.png";
-  const book  = {
-    id: key,
-    img: new Image(),
-    src,
-    pages,
-    state: "closed",
-    frame: 0,
-    acc: 0,
-    pageIndex: 0,
-    targetPage: 0,
-    flipProgress: -1,
-    frameW: 0,
-    frameH: 0,
-    frameCount: 1,
-    orientation: "horizontal",
-    openFrame: 0,
-    x: 0,
-    y: 0,
-    fps: 12,
-    ready: false,
-  };
-  book.img.onload = () => {
-    adjustBookFrameSize(book);
-    book.ready = true;
-  };
-  // Start loading the image
-  book.img.src = src;
-  books[key] = book;
-  return book;
-}
-
-// Open the book associated with the given id.  The book will animate
-// from closed to fully open.  If a book is already open, it will be
-// replaced by the newly requested book.
-function openBookFor(id) {
-  const key = id.toLowerCase();
-  const book = getOrCreateBook(key === "cv" ? "cs" : key);
-  // Reset animation state
-  book.state = "opening";
-  book.frame = 0;
-  book.acc = 0;
-  book.pageIndex = 0;
-  book.targetPage = 0;
-  book.flipProgress = -1;
-  currentBook = book;
-  // Centre the book on the canvas once dimensions are known.  If the
-  // image has not yet loaded, ``frameW`` and ``frameH`` will be zero; in
-  // that case the position will be updated when the image's ``onload``
-  // event fires via ``adjustBookFrameSize()``.
-  if (book.frameW && book.frameH) {
-    book.x = Math.round((canvas.width  - book.frameW) / 2);
-    book.y = Math.round((canvas.height - book.frameH) / 2);
-  }
-}
-
-// Helper: check if the player is close enough to a hotspot to trigger it.
-function nearHotspot(playerObj, hotspot) {
-  const dx = (playerObj.x + playerObj.w / 2) - hotspot.x;
-  const dy = (playerObj.y + playerObj.h)   - hotspot.y;
-  return (dx * dx + dy * dy) <= ((hotspot.r || 0) * (hotspot.r || 0));
-}
-
-// Check if the use key has been pressed near any hotspot.  If so,
-// trigger the appropriate book.  After using a hotspot, ``wantUse`` is
-// cleared to avoid repeated triggers until the key is pressed again.
-function tryUseHotspots() {
-  if (!wantUse) return;
-  wantUse = false;
-  // Only consider hotspots with known page definitions
-  for (const h of hotspots) {
-    if (!h.active) continue;
-    const hid = h.id.toLowerCase();
-    // Accept "cv" as an alias for "cs" and ignore unknown ids
-    const key = hid === "cv" ? "cs" : hid;
-    if (!(key in pagesByBookId)) continue;
-    if (nearHotspot(player, h)) {
-      openBookFor(key);
-      break;
-    }
-  }
-}
-
-// Advance the current book's animation and page transitions.  Should be
-// called once per frame with the elapsed time.  When a book finishes
-// closing, ``currentBook`` is reset to ``null``.
-function updateBook(dt) {
-  const book = currentBook;
-  if (!book) return;
-  // Opening animation
-  if (book.state === "opening") {
-    book.acc += dt;
-    const step = 1 / (book.fps || 12);
-    while (book.acc >= step && book.frame < book.openFrame) {
-      book.acc -= step;
-      book.frame++;
-    }
-    if (book.frame >= book.openFrame) {
-      book.frame = book.openFrame;
-      book.state = "open";
-    }
-  }
-  // Closing animation
-  else if (book.state === "closing") {
-    book.acc += dt;
-    const step = 1 / (book.fps || 12);
-    while (book.acc >= step && book.frame > 0) {
-      book.acc -= step;
-      book.frame--;
-    }
-    if (book.frame <= 0) {
-      book.frame = 0;
-      book.state = "closed";
-      currentBook = null;
-    }
-  }
-  // Page flip cross‑fade
-  if (book.flipProgress >= 0) {
-    book.flipProgress += dt * 4;
-    if (book.flipProgress >= 1) {
-      book.pageIndex = book.targetPage;
-      book.flipProgress = -1;
-    }
-  }
-  // Adjust position in case the canvas size changed after load
-  if (book.frameW && book.frameH) {
-    if (book.x === 0 && book.y === 0) {
-      book.x = Math.round((canvas.width  - book.frameW) / 2);
-      book.y = Math.round((canvas.height - book.frameH) / 2);
-    }
-  }
-}
-
-// Render the current book (if any) on top of the map and player.  A
-// semi‑transparent dark overlay is drawn behind the book to focus the
-// player's attention.  When the book is not fully open, only the frame
-// corresponding to the current animation state is displayed.  When
-// fully open, page text is drawn inside the book.
-function drawBookUI(ctx) {
-  const book = currentBook;
-  if (!book || book.state === "closed") return;
-  // Darken background
-  ctx.save();
-  ctx.fillStyle = "rgba(0,0,0,0.5)";
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.restore();
-  // Determine source rectangle
-  let sx = 0;
-  let sy = 0;
-  const sw = book.frameW;
-  const sh = book.frameH;
-  if (book.orientation === "horizontal") {
-    sx = book.frame * book.frameW;
-  } else {
-    sy = book.frame * book.frameH;
-  }
-  // Draw book sprite
-  ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(book.img, sx, sy, sw, sh, book.x, book.y, sw, sh);
-  // When the book is open or animating the last frame, draw the page text
-  if (book.state === "open" || book.state === "closing" || (book.state === "opening" && book.frame === book.openFrame)) {
-    const pages = book.pages || [];
-    const currentLines = pages[book.pageIndex] ? String(pages[book.pageIndex]).split(/\n/g) : [];
-    let nextLines = currentLines;
-    const flipP = book.flipProgress;
-    if (flipP >= 0) {
-      nextLines = pages[book.targetPage] ? String(pages[book.targetPage]).split(/\n/g) : [];
-    }
-    // Define text area based on book dimensions (20% margins)
-    const marginX = Math.round(sw * 0.2);
-    const marginY = Math.round(sh * 0.2);
-    const tx = book.x + marginX;
-    const ty = book.y + marginY;
-    const lineHeight = 16;
-    const maxLines = Math.floor((sh - marginY * 2) / lineHeight);
-    // Helper to draw an array of lines with alpha
-    const drawLines = (lines, alpha) => {
-      ctx.save();
-      ctx.globalAlpha = alpha;
-      ctx.fillStyle = "#2b261a";
-      ctx.font = "16px monospace";
-      ctx.textBaseline = "top";
-      let y = ty;
-      for (let i = 0; i < lines.length && i < maxLines; i++) {
-        ctx.fillText(lines[i], tx, y);
-        y += lineHeight;
-      }
-      ctx.restore();
-    };
-    if (flipP >= 0) {
-      drawLines(currentLines, 1 - flipP);
-      drawLines(nextLines, flipP);
-    } else {
-      drawLines(currentLines, 1);
-    }
-    // Draw hint text near the bottom of the book
-    ctx.save();
-    ctx.fillStyle = "rgba(255,255,255,0.8)";
-    ctx.font = "14px monospace";
-    ctx.textBaseline = "bottom";
-    const hint = "← click left • click right →    Esc closes";
-    ctx.fillText(hint, tx, book.y + sh - marginY / 2);
-    ctx.restore();
   }
 }
 
@@ -944,23 +903,21 @@ function loop(t) {
   const dt = Math.min(0.05, (t - lastTime) / 1000);
   lastTime = t;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  // Update player movement and collisions
   update(dt);
-  // Advance book animations and page flips
-  updateBook(dt);
-  // Render world and player
   drawMap();
   drawPlayer();
-  // Handle portal transitions
+  // Attempt to use portals (asynchronous).  Portals may change the map.
   tryUsePortals().catch((err) => {
     console.error(err);
     if (loadingEl) loadingEl.textContent = "Error: " + err.message;
   });
-  // Handle interactive hotspots (books)
+  // Check for hotspot interaction and open the book if appropriate.
   tryUseHotspots();
-  // Draw the book UI on top of everything else
-  drawBookUI(ctx);
-  // Clear use flag until next key press
+  // Update the book animation state before drawing it.
+  updateBook(dt);
+  // Draw the book overlay (if open or animating) on top of everything else.
+  drawBook(ctx);
+  // Reset the 'E' use flag for the next frame.
   wantUse = false;
   requestAnimationFrame(loop);
 }
