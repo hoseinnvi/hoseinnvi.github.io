@@ -160,6 +160,7 @@ const book = {
   _pagesCached: null      // Internal cache of the selected topic's pages
 };
 
+
 /**
  * Compute the frame dimensions and count for the book sprite sheet.  The
  * frames are assumed to be square and arranged horizontally.  The last
@@ -170,7 +171,7 @@ function adjustBookFrameSize() {
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
   // Each frame is a square: height and width are equal to the image height.
   book.frameH = img.naturalHeight;
-  book.frameW = book.frameH;
+  book.frameW = book.frameH * 1.5; // FIX: Use a 3:2 aspect ratio for the book
   book.frameCount = Math.max(1, Math.floor(img.naturalWidth / book.frameW));
   // The last frame depicts the fully open book.
   book.idleOpenFrame = Math.max(0, book.frameCount - 1);
