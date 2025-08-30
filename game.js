@@ -169,18 +169,24 @@ const book = {
 function adjustBookFrameSize() {
   const img = book.img;
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
-  // Each frame is a square: height and width are equal to the image height.
+
+  // Each frame is a square: width == height
   book.frameH = img.naturalHeight;
-  book.frameW = book.frameH * 1.5; // FIX: Use a 3:2 aspect ratio for the book
+  book.frameW = book.frameH;
+
+  // Number of frames laid out horizontally
   book.frameCount = Math.max(1, Math.floor(img.naturalWidth / book.frameW));
-  // The last frame depicts the fully open book.
+
+  // Last frame is the fully open book
   book.idleOpenFrame = Math.max(0, book.frameCount - 1);
-  // Centre the book on the canvas if the canvas dimensions are known.
+
+  // Re-center the book
   if (canvas && canvas.width && canvas.height) {
     book.x = Math.round((canvas.width  - book.frameW) / 2);
     book.y = Math.round((canvas.height - book.frameH) / 2);
   }
 }
+
 
 // Load the shared book image and calculate frame metrics.  The image
 // decoding happens asynchronously, and ``adjustBookFrameSize`` will run
