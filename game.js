@@ -52,10 +52,6 @@ const GID_MASK = ~(FLIP_H | FLIP_V | FLIP_D) >>> 0;
 // (four columns for four directions, three rows for animation frames).
 const FRAME_W = 16;
 const FRAME_H = 16;
-// ``SPRITE_COLUMNS`` is the number of columns in the sprite sheet (one per
-// direction); ``SPRITE_ROWS`` is the number of rows (the number of frames
-// in each direction).  For F_01.png there are 4 columns (down, right,
-// up, left) and 3 rows (animation frames).
 // Number of columns (directions) and rows (frames) in the sprite sheet.
 // These are initial defaults; they will be updated dynamically once the
 // player's sprite image has loaded.  See ``setSpriteDimensions()``.
@@ -68,10 +64,7 @@ const CHARACTER_SCALE = 3;
 const PLAYER_W = FRAME_W * CHARACTER_SCALE;
 const PLAYER_H = FRAME_H * CHARACTER_SCALE;
 
-// Movement speeds (pixels per second).  ``WALK_SPEED`` applies when
-// walking; ``RUN_SPEED`` multiplies ``WALK_SPEED`` when the Shift key
-// is held down.  ``WALK_ANIM_FPS`` and ``RUN_ANIM_FPS`` control how
-// quickly the sprite animation cycles while walking or running.
+// Movement speeds (pixels per second).
 const WALK_SPEED     = 100;
 const RUN_MULTIPLIER = 1.7;
 const WALK_ANIM_FPS  = 8;
@@ -84,17 +77,12 @@ const player = {
   spawnId: null,
   facing: "down", // "up", "down", "left", "right"
   sprite: new Image(),
-  // Change this to match your actual filename if necessary.  The default
-  // assumes ``F_01.png`` (underscore).  If your file uses a hyphen
-  // (``F-01.png``), update this string accordingly.
   spriteSrc: "./assets/characters/F_01.png",
 };
 
 /*
  * Determine the number of columns and rows in the player's sprite sheet
- * based on the natural dimensions of the loaded image.  This function
- * should be called after the sprite has been decoded or loaded.  It
- * updates the global ``SPRITE_COLUMNS`` and ``SPRITE_ROWS`` variables.
+ * based on the natural dimensions of the loaded image.
  */
 function setSpriteDimensions() {
   if (player.sprite && player.sprite.naturalWidth && player.sprite.naturalHeight) {
@@ -116,82 +104,128 @@ let hotspots = [];
 
 // --------------------------------------------------------------------
 // Book UI configuration and state
-// The game supports a pop-up "book" overlay that animates open and closed,
-// displays topic-specific text, and allows the player to flip between pages.
-// By default, a single sprite sheet is used for all topics.  Each frame in
-// the sheet is square (height equals width) and the frames are laid out
-// horizontally.  The final frame shows the fully open book.
+// Uses a non-square, variable-width frame strip (e.g., 2048×92).
 const USE_SINGLE_BOOK_IMAGE = true;
-// Path to the shared book sprite sheet.  You can replace this with your
-// own artwork; the sheet should contain a sequence of frames from closed
-// to fully open.  Each frame must be square and arranged in a single row.
 const SINGLE_BOOK_IMAGE_SRC = "./UI/book_open.png";
 
-// Book state object.  When the player interacts with certain hotspots,
-// the book animates open and displays text relevant to that hotspot.
+// Book state object
 const book = {
   img: new Image(),
+  // legacy fields kept for convenience; frameW will mirror current frame sw
   frameW: 0,
   frameH: 0,
   frameCount: 1,
   idleOpenFrame: 0,
-  fps: 12,                // Animation speed for open/close (frames per second)
-  x: 0,                   // Screen position (set after image loads)
+  fps: 12,
+  x: 0,
   y: 0,
   state: "closed",        // "closed" | "opening" | "open" | "flipping" | "closing"
-  frame: 0,               // Current frame index in the sprite sheet
-  acc: 0,                 // Accumulated time for frame timing
-  pageIndex: 0,           // Current page index within the selected topic
-  lastPageIndex: 0,       // Previous page index (for flip animation)
-  nextPageIndex: 0,       // Destination page index during flip animation
-  currentKey: null,       // ID of the hotspot that opened the book
-  flipProgress: 0,        // 0..1 progress during page-flip animation
-  // Text content per topic.  Modify these arrays to customise what each
-  // hotspot displays when the book is open.  Each array entry represents
-  // a single page.
+  frame: 0,
+  acc: 0,
+  pageIndex: 0,
+  lastPageIndex: 0,
+  nextPageIndex: 0,
+  currentKey: null,
+  flipProgress: 0,
   pagesById: {
     cs:   ["Computer Vision", "Stereo and TSDF fusion", "3D surface reconstruction", "Ultrasound + vision"],
     cv:   ["Computer Vision", "Stereo and TSDF fusion", "3D surface reconstruction", "Ultrasound + vision"],
     nlp:  ["NLP & LLMs", "Retrieval Augmented Generation (RAG)", "Agents and tools", "Evaluation & safety", "Production pipelines"],
-    agent:["Agentic AI", "Multi‑tool flows", "MCP/Functions", "Reliability patterns"],
+    agent:["Agentic AI", "Multi-tool flows", "MCP/Functions", "Reliability patterns"],
     rl:   ["Reinforcement Learning", "Policy/value methods", "Environment design", "Evaluation loops"],
     me:   ["About Me", "This page is intentionally left blank."],
   },
-  _pagesCached: null      // Internal cache of the selected topic's pages
+  _pagesCached: null,
+  // NEW: per-frame rectangles for variable-width slicing
+  frames: [] // each item: { sx, sw }
 };
 
+/* ---------------- Variable-width frame handling for book ------------------ */
 
 /**
- * Compute the frame dimensions and count for the book sprite sheet.  The
- * frames are assumed to be square and arranged horizontally.  The last
- * frame (index ``idleOpenFrame``) represents the fully open book.
+ * Build a frame table for a horizontal strip whose width doesn't divide
+ * evenly by frame count. We split total width into `countHint` chunks,
+ * distributing the remainder across the first frames. Optionally nudge
+ * boundaries to nearest mostly-transparent column.
  */
-function adjustBookFrameSize() {
+function buildBookFrames(countHint = 21, snapToTransparent = true) {
   const img = book.img;
   if (!img || !img.naturalWidth || !img.naturalHeight) return;
 
-  // Each frame is a square: width == height
-  book.frameH = img.naturalHeight;
-  book.frameW = book.frameH;
+  const W = img.naturalWidth;
+  const H = img.naturalHeight;
+  book.frameH = H;
 
-  // Number of frames laid out horizontally
-  book.frameCount = Math.max(1, Math.floor(img.naturalWidth / book.frameW));
+  const base = Math.floor(W / countHint);
+  const extra = W - base * countHint; // number of frames that get +1
+  const widths = Array.from({ length: countHint }, (_, i) => base + (i < extra ? 1 : 0));
 
-  // Last frame is the fully open book
+  // Optional: detect transparent separator columns to snap boundaries
+  let isColTransparent = () => false;
+  if (snapToTransparent) {
+    const off = document.createElement("canvas");
+    off.width = W; off.height = H;
+    const octx = off.getContext("2d");
+    octx.drawImage(img, 0, 0);
+    const pixels = octx.getImageData(0, 0, W, H).data;
+    isColTransparent = (x) => {
+      let transparentCount = 0;
+      for (let y = 0; y < H; y++) {
+        const a = pixels[(y * W + x) * 4 + 3];
+        if (a < 8) transparentCount++;
+      }
+      return transparentCount >= Math.floor(H * 0.8);
+    };
+  }
+
+  const sxList = [];
+  let cursor = 0;
+  for (let i = 0; i < widths.length; i++) {
+    let sx = cursor;
+    // search ±3px for a cleaner boundary if available
+    for (let d = 0; snapToTransparent && d <= 3; d++) {
+      const L = sx - d, R = sx + d;
+      if (L >= 0 && isColTransparent(L)) { sx = L; break; }
+      if (R < W && isColTransparent(R))  { sx = R; break; }
+    }
+    sxList.push(sx);
+    cursor += widths[i];
+  }
+
+  book.frames = sxList.map((sx, i) => ({ sx, sw: widths[i] }));
+  book.frameCount = book.frames.length;
   book.idleOpenFrame = Math.max(0, book.frameCount - 1);
 
-  // Re-center the book
+  // center based on the fully open frame width
+  const openW = book.frames[book.idleOpenFrame].sw;
+  book.frameW = openW; // keep legacy width in sync with the typical (open) frame
   if (canvas && canvas.width && canvas.height) {
-    book.x = Math.round((canvas.width  - book.frameW) / 2);
-    book.y = Math.round((canvas.height - book.frameH) / 2);
+    book.x = Math.round((canvas.width  - openW) / 2);
+    book.y = Math.round((canvas.height - H) / 2);
   }
 }
 
+/**
+ * Backwards-compatible entry point called on image load/ready.
+ */
+function adjustBookFrameSize() {
+  if (!book.img || !book.img.naturalWidth) return;
+  // For your 2048×92 strip, 21 frames works well.
+  buildBookFrames(21, true);
+}
 
-// Load the shared book image and calculate frame metrics.  The image
-// decoding happens asynchronously, and ``adjustBookFrameSize`` will run
-// when the image has loaded.  If the image is already cached, the
-// dimensions are computed immediately.
+/**
+ * Convenience: get the current frame rect (sx, sw, sh) and also return sw
+ * so all click bounds and text layout use the correct width per frame.
+ */
+function getCurrentBookFrame() {
+  if (!book.frames.length) return { sx: 0, sw: book.frameW || 0, sh: book.frameH || 0 };
+  const fi = Math.max(0, Math.min(book.frame, book.frames.length - 1));
+  const fr = book.frames[fi];
+  return { sx: fr.sx, sw: fr.sw, sh: book.frameH };
+}
+
+// Load the shared book image and calculate frame metrics
 book.img.onload = adjustBookFrameSize;
 book.img.src = SINGLE_BOOK_IMAGE_SRC;
 if (book.img.complete) {
@@ -228,40 +262,32 @@ window.addEventListener("keyup", (e) => {
   keys[k] = false;
 });
 
-// Additional input handlers for the book UI.  Pressing the Escape key will
-// close the book (if open), and clicking on the left or right half of
-// the book while it is open flips to the previous or next page.
+// Additional input handlers for the book UI.
 window.addEventListener("keydown", (e) => {
-  // Only handle Escape if the book UI is active; let other keys through.
   if (e.key === "Escape" && book.state !== "closed") {
-    // Start closing the book regardless of whether it is fully open.
     book.state = "closing";
     book.acc = 0;
     e.preventDefault();
   }
 });
 canvas.addEventListener("mousedown", (e) => {
-  // Ignore clicks when the book is not fully open.
   if (book.state !== "open") return;
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
   const my = e.clientY - rect.top;
-  // Check if the click falls within the book's bounding box.
-  if (mx < book.x || mx > book.x + book.frameW ||
-      my < book.y || my > book.y + book.frameH) return;
-  // Flip pages based on whether the click was on the left or right side.
+
+  const { sw } = getCurrentBookFrame();
+  const fw = sw, fh = book.frameH;
+  // Use current frame bounds
+  if (mx < book.x || mx > book.x + fw || my < book.y || my > book.y + fh) return;
+
   const total = book._pagesCached ? book._pagesCached.length : 0;
   if (!total) return;
-  // Determine page change direction
+
   let newIndex;
-  if (mx < book.x + book.frameW / 2) {
-    // Left side: previous page (wrap around)
-    newIndex = (book.pageIndex - 1 + total) % total;
-  } else {
-    // Right side: next page
-    newIndex = (book.pageIndex + 1) % total;
-  }
-  // Setup flip animation
+  if (mx < book.x + fw / 2) newIndex = (book.pageIndex - 1 + total) % total;
+  else                      newIndex = (book.pageIndex + 1) % total;
+
   book.lastPageIndex = book.pageIndex;
   book.nextPageIndex = newIndex;
   book.flipProgress = 0;
@@ -280,8 +306,7 @@ function resizeCanvasToMap(map) {
   canvas.height = map.height * map.tileheight;
 }
 
-// Load a Tiled map and all of its tileset images.  Errors are caught and
-// reported into the loading overlay instead of leaving the game stuck.
+// Load a Tiled map and all of its tileset images.
 async function loadMap(jsonPath) {
   let res;
   try {
@@ -300,18 +325,14 @@ async function loadMap(jsonPath) {
   solidRects    = [];
   portals       = [];
   spawns        = {};
-  // Reset hotspots when loading a new map.  The Hotspots layer may be
-  // defined per map and contains interactive trigger zones.
   hotspots      = [];
 
   resizeCanvasToMap(map);
 
-  // Recalculate book position when the canvas size changes.  The book
-  // sprite sheet may not have loaded yet, so ``frameW`` and ``frameH``
-  // might still be zero.  This will be updated again once the image
-  // finishes loading.
-  if (book.frameW && book.frameH) {
-    book.x = Math.round((canvas.width  - book.frameW) / 2);
+  // Recalculate book position if we already know sizes.
+  if (book.frames.length) {
+    const openW = book.frames[book.idleOpenFrame].sw;
+    book.x = Math.round((canvas.width  - openW) / 2);
     book.y = Math.round((canvas.height - book.frameH) / 2);
   }
 
@@ -380,11 +401,6 @@ async function loadMap(jsonPath) {
         };
       }
     }
-    // Parse interactive hotspots from the "Hotspots" object layer.  Each
-    // object defines an area (by x/y) where the player can press E to
-    // open the book.  A ``radius`` property can override the default
-    // trigger radius (12 pixels).  The ``id`` property determines which
-    // content is shown.
     if (layer.name === "Hotspots") {
       for (const o of layer.objects) {
         const P = toPropMap(o.properties);
@@ -415,12 +431,8 @@ async function loadMap(jsonPath) {
     player.sprite.src = player.spriteSrc;
     try {
       await player.sprite.decode?.();
-      // After decoding, update sprite sheet dimensions
       setSpriteDimensions();
     } catch (e) {
-      // If decode fails, log a warning but continue.  The sprite may still
-      // load asynchronously via the 'load' event (below).  We attempt to
-      // determine the sheet dimensions once it does load.
       console.warn(`Failed to decode player sprite ${player.spriteSrc}:`, e);
     }
   }
@@ -498,12 +510,10 @@ function drawTiledTextObject(o, layer) {
   // Alignment and position
   const width  = o.width  || 0;
   const height = o.height || 0;
-  // Apply any layer offsets to the object position
   const offsetX = layer.offsetx || 0;
   const offsetY = layer.offsety || 0;
   let x = o.x + offsetX;
   let y = o.y + offsetY;
-  // Horizontal alignment: adjust x based on the object's width and alignment
   const h = (t.halign || "left").toLowerCase();
   if (h === "center") {
     ctx.textAlign = "center";
@@ -514,7 +524,6 @@ function drawTiledTextObject(o, layer) {
   } else {
     ctx.textAlign = "left";
   }
-  // Vertical alignment: adjust y based on the object's height and alignment
   const v = (t.valign || "top").toLowerCase();
   if (v === "center") {
     ctx.textBaseline = "middle";
@@ -525,9 +534,7 @@ function drawTiledTextObject(o, layer) {
   } else {
     ctx.textBaseline = "top";
   }
-  // Wrap width: only set a maximum width when width > 0.  Otherwise undefined
   const maxW = width > 0 ? width : undefined;
-  // Draw stroke if defined
   if (t.stroke && t.stroke.color) {
     const sw = t.stroke.width || 1;
     ctx.lineWidth = sw;
@@ -536,7 +543,6 @@ function drawTiledTextObject(o, layer) {
       ctx.strokeText(line, lx, ly);
     });
   }
-  // Draw fill text
   drawWrappedText(t.text, x, y, maxW, size, (line, lx, ly) => {
     ctx.fillText(line, lx, ly);
   });
@@ -576,7 +582,6 @@ function pickTilesetFor(gid) {
 
 /* STEP 3 — Movement & collision */
 function update(dt) {
-  // Determine if run key is held (Shift)
   const isRunning = !!(keys["shift"] || keys["shiftleft"] || keys["shiftright"]);
   const speed = isRunning ? WALK_SPEED * RUN_MULTIPLIER : WALK_SPEED;
   let vx = 0;
@@ -585,14 +590,12 @@ function update(dt) {
   if (keys["arrowright"]|| keys["d"])  vx += speed;
   if (keys["arrowup"]   || keys["w"])  vy -= speed;
   if (keys["arrowdown"] || keys["s"])  vy += speed;
-  // Normalise diagonal
   if (vx && vy) {
     const inv = 1 / Math.sqrt(2);
     vx *= inv; vy *= inv;
   }
   player.vx = vx;
   player.vy = vy;
-  // Update facing.  When moving diagonally, choose the dominant axis.
   if (Math.abs(vx) > Math.abs(vy)) {
     if (vx < 0) player.facing = "left";
     else if (vx > 0) player.facing = "right";
@@ -600,10 +603,8 @@ function update(dt) {
     if (vy < 0) player.facing = "up";
     else if (vy > 0) player.facing = "down";
   }
-  // Advance animation time only when moving
   if (vx || vy) animTime += dt;
   else animTime = 0;
-  // Move X
   player.x += player.vx * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
@@ -611,7 +612,6 @@ function update(dt) {
       else if (player.vx < 0) player.x = r.x + r.w;
     }
   }
-  // Move Y
   player.y += player.vy * dt;
   for (const r of solidRects) {
     if (overlap(player, r)) {
@@ -628,18 +628,6 @@ function overlap(a, b) {
 
 /* -----------------------------------------------------------------------
  * Book UI helper functions
- *
- * The following functions implement the behaviour of the interactive book
- * overlay.  The book can be opened by pressing E near a hotspot (see
- * ``tryUseHotspots``).  When open, the book animates via frames in the
- * sprite sheet.  The player can flip pages by clicking on the left or
- * right side of the book, and press Escape to close it.
- */
-
-/**
- * Return true if the player's centre is within a circular hotspot.
- * @param {object} a - Player object with x, y, w, h fields.
- * @param {object} b - Hotspot with x, y (centre) and r (radius).
  */
 function near(a, b) {
   const dx = (a.x + a.w / 2) - b.x;
@@ -647,23 +635,14 @@ function near(a, b) {
   return (dx * dx + dy * dy) <= (b.r * b.r);
 }
 
-/**
- * Start opening the book for the given hotspot ID.  This sets up the
- * animation state and loads the appropriate pages for the topic.  If
- * ``USE_SINGLE_BOOK_IMAGE`` is true, the same sprite sheet is reused
- * regardless of topic.
- * @param {string} idLower - Lowercase ID of the hotspot (e.g. "cv", "nlp").
- */
 function openBookFor(idLower) {
   const key = idLower.toLowerCase();
-  // If using a single image, ensure the sprite is loaded and sized.
   if (USE_SINGLE_BOOK_IMAGE) {
     if (book.img.src !== SINGLE_BOOK_IMAGE_SRC) {
       book.img.onload = adjustBookFrameSize;
       book.img.src = SINGLE_BOOK_IMAGE_SRC;
     }
   }
-  // Pull pages for this topic; fall back to cs if cv alias is used.
   const pages =
     book.pagesById[key] ||
     book.pagesById[(key === "cv" ? "cs" : "cs")] ||
@@ -677,27 +656,23 @@ function openBookFor(idLower) {
   book.flipProgress  = 0;
   book.state         = "opening";
   book._pagesCached  = pages;
-  // Ensure the book is centred on screen (in case window size changed).
-  if (book.frameW && book.frameH) {
-    book.x = Math.round((canvas.width  - book.frameW) / 2);
+
+  // re-center based on known open frame width if available
+  if (book.frames.length) {
+    const openW = book.frames[book.idleOpenFrame].sw;
+    book.x = Math.round((canvas.width  - openW) / 2);
     book.y = Math.round((canvas.height - book.frameH) / 2);
   }
 }
 
-/**
- * Check if the player is near any active hotspot and open the book if
- * the E key was pressed.  After handling, the ``wantUse`` flag is reset.
- */
 function tryUseHotspots() {
   if (!wantUse) return;
   wantUse = false;
   if (!hotspots || !hotspots.length) return;
-  // Define which IDs are valid triggers; others are ignored.
   const valid = new Set(["cv", "cs", "nlp", "agent", "rl", "me"]);
   for (const h of hotspots) {
     if (!h.active) continue;
     const id = (h.id || "").toLowerCase();
-    // Accept alias "cv" as "cs" (computer vision).
     if (!valid.has(id) && !(id === "cv" || id === "cs")) continue;
     if (near(player, h)) {
       openBookFor(id);
@@ -706,15 +681,8 @@ function tryUseHotspots() {
   }
 }
 
-/**
- * Animate the book's open/close and page-flip states.  Should be called
- * once per frame with the frame's delta time.  When the book is fully
- * open, it remains in an idle state until closed or pages are flipped.
- * @param {number} dt - Time elapsed since the last frame, in seconds.
- */
 function updateBook(dt) {
   if (book.state === "closed") return;
-  // Opening animation: step through frames until the idle open frame.
   if (book.state === "opening") {
     book.acc += dt;
     const interval = 1 / book.fps;
@@ -728,7 +696,6 @@ function updateBook(dt) {
     }
     return;
   }
-  // Closing animation: reverse through frames until fully closed.
   if (book.state === "closing") {
     book.acc += dt;
     const interval = 1 / book.fps;
@@ -742,10 +709,8 @@ function updateBook(dt) {
     }
     return;
   }
-  // Flipping animation: cross-fade between pages.
   if (book.state === "flipping") {
-    // Flip speed: adjust this to make page turns faster or slower.
-    const flipSpeed = 2; // units per second (completes in 0.5s)
+    const flipSpeed = 2;
     book.flipProgress += dt * flipSpeed;
     if (book.flipProgress >= 1) {
       book.flipProgress = 0;
@@ -754,55 +719,50 @@ function updateBook(dt) {
     }
     return;
   }
-  // Idle open state: nothing to update.
 }
 
-/**
- * Draw the book overlay and its contents.  If the book is not open or
- * animating, this function does nothing.  The underlying map and player
- * should already have been drawn before calling this function.
- * @param {CanvasRenderingContext2D} ctx - The drawing context.
- */
 function drawBook(ctx) {
   if (book.state === "closed") return;
   ctx.save();
   // Dim the world behind the book.
   ctx.fillStyle = "rgba(0,0,0,0.5)";
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  // Draw the current frame of the book sprite.
+
+  // Draw the current frame of the book sprite using variable-width slicing.
+  if (!book.frames.length) { ctx.restore(); return; }
+  const fi = Math.max(0, Math.min(book.frame, book.frames.length - 1));
+  const { sx, sw } = book.frames[fi];
+  const sy = 0, sh = book.frameH;
+
   ctx.imageSmoothingEnabled = false;
-  const sx = book.frame * book.frameW;
-  ctx.drawImage(
-    book.img,
-    sx, 0, book.frameW, book.frameH,
-    book.x, book.y,
-    book.frameW, book.frameH
-  );
+  const scale = 1; // increase to 1.25/1.5 if you want it bigger
+  const dw = Math.round(sw * scale);
+  const dh = Math.round(sh * scale);
+  const dx = Math.round(book.x - (dw - sw) / 2);
+  const dy = Math.round(book.y - (dh - sh) / 2);
+  ctx.drawImage(book.img, sx, sy, sw, sh, dx, dy, dw, dh);
+
   // Draw page text only when the book is open or flipping.
   if (book.state === "open" || book.state === "flipping") {
     const pages = book._pagesCached || [];
-    // Determine old and new page indices for cross-fading.
     const oldIndex = book.pageIndex;
     const newIndex = (book.state === "flipping") ? book.nextPageIndex : book.pageIndex;
-    // Function to draw a page's text into the open-book area.  The
-    // coordinates and dimensions are computed relative to the book's
-    // current position and frame size.  The text is wrapped within
-    // ``maxW`` pixels horizontally and may extend across multiple rows.
+
     function drawPageText(text, alpha) {
       ctx.globalAlpha = alpha;
       ctx.fillStyle = "#2b261a";
       ctx.font = "16px monospace";
       ctx.textBaseline = "top";
-      // Define a padding around the text and the maximum width.
-      const padX = Math.floor(book.frameW * 0.18);
-      const padY = Math.floor(book.frameH * 0.18);
-      const maxW  = book.frameW - padX * 2;
-      let x0 = book.x + padX;
-      let y0 = book.y + padY;
+      // Padding and wrap width based on CURRENT frame width
+      const padX = Math.floor(sw * 0.18);
+      const padY = Math.floor(sh * 0.18);
+      const maxW  = sw - padX * 2;
+      let x0 = dx + padX;
+      let y0 = dy + padY;
       const words = String(text || "").split(/\s+/);
       let line = "";
       let y = y0;
-      const lineHeight = 18; // pixels per line
+      const lineHeight = 18;
       for (let i = 0; i < words.length; i++) {
         const test = line ? line + " " + words[i] : words[i];
         const w = ctx.measureText(test).width;
@@ -817,22 +777,23 @@ function drawBook(ctx) {
       if (line) ctx.fillText(line, x0, y);
       ctx.globalAlpha = 1;
     }
-    // Draw old and new pages with appropriate transparency when flipping.
+
     if (book.state === "flipping") {
       drawPageText(pages[oldIndex], 1 - book.flipProgress);
       drawPageText(pages[newIndex], book.flipProgress);
     } else {
       drawPageText(pages[oldIndex], 1);
     }
-    // Draw interaction hint along the bottom of the book.
+
+    // Interaction hint (uses current frame width and bottom)
     ctx.fillStyle = "rgba(255,255,255,0.75)";
     ctx.font = "14px monospace";
     ctx.textBaseline = "bottom";
     const hint = "← click left • click right →     (Esc closes)";
     ctx.fillText(
       hint,
-      book.x + Math.floor(book.frameW * 0.05),
-      book.y + book.frameH - Math.floor(book.frameH * 0.05)
+      dx + Math.floor(sw * 0.05),
+      dy + dh - Math.floor(sh * 0.05)
     );
   }
   ctx.restore();
@@ -854,8 +815,6 @@ async function tryUsePortals() {
 }
 
 /* STEP 5 — Drawing the player sprite */
-// Column index for each facing direction.  Columns correspond to the
-// directions in the order: down (0), right (1), up (2), left (3).
 function colForFacing(facing) {
   switch (facing) {
     case "down":  return 0;
@@ -866,13 +825,8 @@ function colForFacing(facing) {
   }
 }
 
-// Compute the current animation row (frame) index.  If the player is
-// idle, return the middle frame (row 1) for a neutral pose.  When
-// moving, cycle through the number of available rows (``SPRITE_ROWS``)
-// according to the configured FPS.
 function currentAnimRow() {
   if (!(player.vx || player.vy)) {
-    // Use the middle frame as idle pose (row index 1 for 3 rows)
     return Math.floor(SPRITE_ROWS / 2);
   }
   const isRunning = !!(keys["shift"] || keys["shiftleft"] || keys["shiftright"]);
@@ -913,18 +867,13 @@ function loop(t) {
   update(dt);
   drawMap();
   drawPlayer();
-  // Attempt to use portals (asynchronous).  Portals may change the map.
   tryUsePortals().catch((err) => {
     console.error(err);
     if (loadingEl) loadingEl.textContent = "Error: " + err.message;
   });
-  // Check for hotspot interaction and open the book if appropriate.
   tryUseHotspots();
-  // Update the book animation state before drawing it.
   updateBook(dt);
-  // Draw the book overlay (if open or animating) on top of everything else.
   drawBook(ctx);
-  // Reset the 'E' use flag for the next frame.
   wantUse = false;
   requestAnimationFrame(loop);
 }
@@ -933,8 +882,6 @@ function loop(t) {
 (async function boot() {
   try {
     showLoading("Loading map…");
-    // Attempt to load the player's sprite.  Use a timeout to avoid hanging
-    // forever if the image is missing.
     await new Promise((res) => {
       const timer = setTimeout(() => {
         console.warn("Sprite load timed out; continuing without waiting");
@@ -942,13 +889,11 @@ function loop(t) {
       }, 3000);
       player.sprite.addEventListener("load", () => {
         clearTimeout(timer);
-        // Once loaded, update the sprite sheet dimensions
         setSpriteDimensions();
         res();
       }, { once: true });
       player.sprite.src = player.spriteSrc;
     });
-    // Choose an initial map and spawn point here.  Modify as needed.
     player.spawnId = "toOut";
     await loadMap("maps/outdoor.json");
     hideLoading();
